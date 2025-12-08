@@ -1,0 +1,43 @@
+[project]
+name = "ai-assistant"
+version = "0.1.0"
+description = "Journalyst AI Assistant - Trading journal analysis pipeline"
+requires-python = ">=3.10"
+dependencies = [
+    # Core Web Framework
+    "fastapi>=0.122.0",
+    "uvicorn[standard]>=0.38.0",
+    "pydantic>=2.12.4",
+    "pydantic-settings>=2.12.0",
+    
+    # Database - PostgreSQL
+    "psycopg2-binary>=2.9.11",
+    "sqlalchemy>=2.0.44",
+    
+    # Database - Redis (Cache & Session)
+    "redis>=7.1.0",
+    "hiredis>=3.3.0",
+    
+    # Vector Database - QDrant
+    "qdrant-client>=1.16.0",
+    
+    # OpenAI Integration
+    "openai>=2.8.1",
+    "tiktoken>=0.12.0",
+
+    # Embeddings & ML
+    "sentence-transformers",
+    
+    # Environment
+    "python-dotenv>=1.2.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.1",
+    "pytest-asyncio>=1.3.0",
+]
+
+# Use PyTorch CPU-only index to avoid CUDA dependencies (~2-3GB savings)
+[tool.uv]
+extra-index-url = ["https://download.pytorch.org/whl/cpu"]
