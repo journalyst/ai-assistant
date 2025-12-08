@@ -1,0 +1,71 @@
+# Existing
+.github/
+Reference/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.virtualenv/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.envrc
+
+# Packaging / build
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.ipynb_checkpoints/
+
+# Coverage / testing
+.coverage
+coverage.xml
+htmlcov/
+
+# Logs
+*.log
+logs/
+
+# Editors / IDE
+.vscode/
+.idea/
+
+# OS / misc
+.DS_Store
+Thumbs.db
+
+# Node / frontend (if present)
+node_modules/
+*.tsbuildinfo
+
+# Data / runtime
+dump.rdb
+*.sqlite3
+qdrant/data/
+redis/data/
+data/tmp/
+
+# Security / secrets (adjust as needed)
+*.pem
+*.key
+*.crt
+*.cert
+*.p12
+*.enc
+
+# Ignore local config overrides
+local_settings.py
