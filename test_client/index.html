@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Journalyst AI Assistant – Test Client</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <i class="fas fa-chart-line"></i>
+          <span>Journalyst AI</span>
+        </div>
+        <span class="version">v0.1.0</span>
+      </div>
+      
+      <div class="sidebar-section">
+        <h3><i class="fas fa-cog"></i> Settings</h3>
+        
+        <div class="setting-group">
+          <label for="userId">
+            <i class="fas fa-user"></i> User ID
+          </label>
+          <select id="userId">
+            <option value="1">User 1 - Alex Johnson</option>
+            <option value="2">User 2 - Sarah Chen</option>
+            <option value="3">User 3 - Marcus Williams</option>
+          </select>
+        </div>
+        
+        <div class="setting-group">
+          <label for="sessionId">
+            <i class="fas fa-key"></i> Session ID
+          </label>
+          <input id="sessionId" placeholder="Auto-generated" />
+          <button id="newSessionBtn" class="btn-small" title="New Session">
+            <i class="fas fa-rotate"></i>
+          </button>
+        </div>
+      </div>
+      
+      <div class="sidebar-section">
+        <h3><i class="fas fa-lightbulb"></i> Quick Queries</h3>
+        <div class="quick-queries">
+          <button class="quick-query" data-query="Show my top 5 profitable trades this month">
+            Top profitable trades
+          </button>
+          <button class="quick-query" data-query="What's my overall win rate?">
+            Overall win rate
+          </button>
+          <button class="quick-query" data-query="Compare my performance across different strategies">
+            Strategy comparison
+          </button>
+          <button class="quick-query" data-query="Show all losing trades over $100">
+            Losing trades > $100
+          </button>
+          <button class="quick-query" data-query="What's my performance on EURUSD?">
+            EURUSD performance
+          </button>
+          <button class="quick-query" data-query="Show my emotional patterns when trading">
+            Emotional patterns
+          </button>
+          <button class="quick-query" data-query="What did I learn from my recent trades?">
+            Recent learnings
+          </button>
+          <button class="quick-query" data-query="Show trades from the London session">
+            London session trades
+          </button>
+        </div>
+      </div>
+      
+      <div class="sidebar-section status-section">
+        <h3><i class="fas fa-server"></i> API Status</h3>
+        <div class="status-indicator" id="apiStatus">
+          <span class="status-dot"></span>
+          <span class="status-text">Checking...</span>
+        </div>
+      </div>
+    </aside>
+    
+    <!-- Main Chat Area -->
+    <main class="chat-container">
+      <header class="chat-header">
+        <h1><i class="fas fa-robot"></i> AI Trading Assistant</h1>
+        <div class="header-actions">
+          <button id="clearChatBtn" class="btn-icon" title="Clear Chat">
+            <i class="fas fa-trash"></i>
+          </button>
+          <button id="toggleMetaBtn" class="btn-icon active" title="Toggle Metadata Panel">
+            <i class="fas fa-info-circle"></i>
+          </button>
+        </div>
+      </header>
+      
+      <div class="chat-messages" id="chatMessages">
+        <div class="welcome-message">
+          <div class="welcome-icon">
+            <i class="fas fa-chart-pie"></i>
+          </div>
+          <h2>Welcome to Journalyst AI</h2>
+          <p>Ask me anything about your trading data, journal entries, or performance metrics.</p>
+          <div class="welcome-examples">
+            <span>Try asking:</span>
+            <ul>
+              <li>"Show my top 5 profitable trades this month"</li>
+              <li>"What's my win rate on forex pairs?"</li>
+              <li>"Analyze my emotional patterns when trading"</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      
+      <div class="chat-input-container">
+        <div class="input-wrapper">
+          <textarea 
+            id="query" 
+            rows="1" 
+            placeholder="Ask about your trades, strategies, or journal entries..."
+            autofocus
+          ></textarea>
+          <button id="sendBtn" title="Send (Enter)">
+            <i class="fas fa-paper-plane"></i>
+          </button>
+        </div>
+      </div>
+    </main>
+    
+    <!-- Metadata Panel -->
+    <aside class="metadata-panel" id="metadataPanel">
+      <div class="panel-header">
+        <h3><i class="fas fa-database"></i> Response Details</h3>
+      </div>
+      
+      <div class="panel-content" id="metadataContent">
+        <div class="empty-state">
+          <i class="fas fa-inbox"></i>
+          <p>Send a query to see response metadata</p>
+        </div>
+      </div>
+    </aside>
+  </div>
+  
+  <script src="/static/app.js"></script>
+</body>
+</html>
