@@ -78,12 +78,22 @@ async def generate_stream_response(
         generator = ResponseGenerator()
         context_str = f"Retrieved Data: {retrieved_data}"
         
+        # Extract date context from retriever for prompt enrichment
+        date_period_context = None
+        if retriever.date_context:
+            _, _, date_context_str = retriever.date_context
+            date_period_context = date_context_str
+        
+        current_date = retriever.current_date.strftime("%B %d, %Y")
+        
         full_response = ""
         chunk_count = 0
         for chunk in generator.generate_response_stream(
             user_query=request.query,
             context=context_str,
-            user_name=request.user_name
+            user_name=request.user_name,
+            current_date=current_date,
+            date_period_context=date_period_context
         ):
             full_response += chunk
             chunk_count += 1
@@ -161,10 +171,20 @@ async def chat_endpoint(request: ChatRequest):
         generator = ResponseGenerator()
         context_str = f"Retrieved Data: {retrieved_data}"
         
+        # Extract date context from retriever for prompt enrichment
+        date_period_context = None
+        if retriever.date_context:
+            _, _, date_context_str = retriever.date_context
+            date_period_context = date_context_str
+        
+        current_date = retriever.current_date.strftime("%B %d, %Y")
+        
         response_text = generator.generate_response(
             user_query=request.query,
             context=context_str,
-            user_name=request.user_name
+            user_name=request.user_name,
+            current_date=current_date,
+            date_period_context=date_period_context
         )
         llm_duration = (time.perf_counter() - llm_start) * 1000
 

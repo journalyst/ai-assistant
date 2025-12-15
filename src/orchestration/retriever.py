@@ -2,17 +2,20 @@ import time
 from src.database.executor import QueryExecutor
 from src.database.queries import TradeQueries
 from .router import QueryRouter
+from .date_utils import DateQueryClassifier
 from src.vector_db.journal_store import JournalStore
 from src.logger import get_logger
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple
 
 logger = get_logger(__name__)
 
 class DataRetriever:
     """Retrieves data from various sources based on user queries."""
-    def __init__(self, user_id: int):
+    def __init__(self, user_id: int, current_date: Optional[datetime] = None):
         self.user_id = user_id
+        self.current_date = current_date or datetime.now()
         self.query_analysis = None
+        self.date_context = None  # Store extracted date context
         self.timings = {}  # Track component timings
 
     def retrieve_data(self, user_query: str) -> Dict[str, Any]:
@@ -21,6 +24,13 @@ class DataRetriever:
         query_preview = user_query[:60] + "..." if len(user_query) > 60 else user_query
         
         logger.info(f"[RETRIEVER] Starting data retrieval for user {self.user_id} | query='{query_preview}'")
+        
+        # Step 0: Extract date context from query
+        date_context = DateQueryClassifier.extract_date_context(user_query, self.current_date)
+        self.date_context = date_context
+        if date_context:
+            start_date, end_date, context_desc = date_context
+            logger.info(f"[RETRIEVER] Date context detected: {context_desc}")
         
         # Step 1: Route the query
         router_start = time.perf_counter()
@@ -37,7 +47,14 @@ class DataRetriever:
         if query_type in ["trade_only", "mixed"]:
             trade_start = time.perf_counter()
             logger.info(f"[RETRIEVER] Fetching trade data from PostgreSQL for user {self.user_id}...")
-            trades = TradeQueries.get_trades_by_user(self.user_id)
+            
+            # Use date range if extracted from query, otherwise fetch all trades
+            if date_context:
+                start_date, end_date, _ = date_context
+                trades = TradeQueries.get_trades_by_date_range(self.user_id, start_date, end_date)
+            else:
+                trades = TradeQueries.get_trades_by_user(self.user_id)
+            
             self.timings["trades_db"] = (time.perf_counter() - trade_start) * 1000
             data["trades"] = trades
             logger.info(f"[RETRIEVER] Retrieved {len(trades)} trades in {self.timings['trades_db']:.2f}ms")

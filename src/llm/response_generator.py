@@ -39,7 +39,7 @@ class ResponseGenerator:
             self.client = get_openai_client()
         self.model = settings.analysis_model
 
-    def generate_response(self, user_query: str, context: str, user_name: str = "Trader") -> str:
+    def generate_response(self, user_query: str, context: str, user_name: str = "Trader", current_date: Optional[str] = None, date_period_context: Optional[str] = None) -> str:
         """
         Generates a response using the configured LLM provider (non-streaming).
         """
@@ -50,7 +50,11 @@ class ResponseGenerator:
         logger.info(f"[LLM] Starting response generation | provider={self.provider} | model={self.model} | query='{query_preview}'")
         logger.debug(f"[LLM] Context size: {context_size} chars")
 
-        formatted_system_prompt = PromptModifier.get_modified_prompt(user_name)
+        formatted_system_prompt = PromptModifier.get_modified_prompt(
+            user_name=user_name,
+            current_date=current_date or "",
+            date_period_context=date_period_context or ""
+        )
 
         try:
             api_start = time.perf_counter()
@@ -101,7 +105,9 @@ class ResponseGenerator:
         self, 
         user_query: str, 
         context: str, 
-        user_name: str = "Trader"
+        user_name: str = "Trader",
+        current_date: Optional[str] = None,
+        date_period_context: Optional[str] = None
     ) -> Generator[str, None, None]:
         """
         Generates a streaming response using the configured LLM provider.
@@ -114,7 +120,11 @@ class ResponseGenerator:
         logger.info(f"[LLM_STREAM] Starting streaming response | provider={self.provider} | model={self.model} | query='{query_preview}'")
         logger.debug(f"[LLM_STREAM] Context size: {context_size} chars")
 
-        formatted_system_prompt = PromptModifier.get_modified_prompt(user_name)
+        formatted_system_prompt = PromptModifier.get_modified_prompt(
+            user_name=user_name,
+            current_date=current_date or "",
+            date_period_context=date_period_context or ""
+        )
         full_response = ""
         chunk_count = 0
         first_chunk_time = None

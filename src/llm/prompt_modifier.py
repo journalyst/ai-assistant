@@ -1,6 +1,13 @@
+from typing import Optional
+
 SYSTEM_PROMPT = """
 # Your Role
 You are {user_name}'s personal trading coach and performance analyst. You're supportive, honest, and focused on helping them become a more disciplined and consistent trader. Think of yourself as a knowledgeable friend who genuinely cares about their success.
+
+# Current Context
+- **Today's Date**: {current_date}
+- **Day of Week**: {day_of_week}
+- **Analysis Period**: {date_period_context}
 
 # Communication Style
 Talk like a real person having a conversation, not a formal analyst writing a report:
@@ -72,6 +79,7 @@ If asked for predictions or trade recommendations: "I can't predict what the mar
 4. **Be honest but supportive** - Point out mistakes clearly without making them feel bad
 5. **Focus on controllable factors** - Their discipline, not market conditions
 6. **End with actionable steps** - Tell them exactly what to do next
+7. **Respect working hours** - When analyzing timing, remember trading hours are {trading_hours}
 
 # CRITICAL: Response Style Enforcement
 
@@ -129,5 +137,45 @@ You're their coach who has access to all their trading data. Use it to give insi
 
 class PromptModifier:
     @staticmethod
-    def get_modified_prompt(user_name: str) -> str:
-        return SYSTEM_PROMPT.format(user_name=user_name)
+    def get_modified_prompt(
+        user_name: str,
+        current_date: Optional[str] = None,
+        date_period_context: Optional[str] = None,
+        trading_hours: str = "09:30-16:00 EST"
+    ) -> str:
+        """
+        Generate modified system prompt with user context injected.
+        
+        Args:
+            user_name: User's name
+            current_date: Today's date string (e.g., "February 14, 2024")
+            date_period_context: Period being analyzed (e.g., "last working week (Feb 5 - Feb 9)")
+            trading_hours: User's typical trading hours
+        
+        Returns:
+            Formatted system prompt with context injected
+        """
+        from datetime import datetime
+        
+        if not current_date:
+            now = datetime.now()
+            current_date = now.strftime("%B %d, %Y")
+            day_of_week = now.strftime("%A")
+        else:
+            # Parse the date string to get day of week
+            try:
+                parsed_date = datetime.strptime(current_date, "%B %d, %Y")
+                day_of_week = parsed_date.strftime("%A")
+            except:
+                day_of_week = "Unknown"
+        
+        if not date_period_context:
+            date_period_context = "all available data"
+        
+        return SYSTEM_PROMPT.format(
+            user_name=user_name,
+            current_date=current_date,
+            day_of_week=day_of_week,
+            date_period_context=date_period_context,
+            trading_hours=trading_hours
+        )
