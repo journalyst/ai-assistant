@@ -127,6 +127,55 @@ async def generate_stream_response(
         yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
 
 
+async def _generate_out_of_domain_response(
+    response_text: str,
+    start_time: float,
+    request_id: str = "unknown"
+) -> AsyncGenerator[str, None]:
+    """
+    Async generator for out-of-domain query rejection (SSE streaming).
+    Yields a polite rejection message.
+    """
+    try:
+        # Send start event
+        start_event = {
+            "event": "start",
+            "data": {
+                "request_id": request_id,
+                "query_type": "out_of_domain",
+                "status": "rejected"
+            }
+        }
+        yield f"event: start\ndata: {json.dumps(start_event['data'])}\n\n"
+        
+        # Send data event (empty for out-of-domain)
+        data_event = {"trade_data": [], "journal_data": []}
+        yield f"event: data\ndata: {json.dumps(data_event)}\n\n"
+        
+        # Send response as single chunk
+        yield f"event: chunk\ndata: {json.dumps({'text': response_text})}\n\n"
+        
+        # Send done event
+        total_duration = (time.perf_counter() - start_time) * 1000
+        done_event = {
+            "request_id": request_id,
+            "duration_ms": total_duration,
+            "response_length": len(response_text),
+            "chunks": 1,
+            "query_type": "out_of_domain",
+            "status": "rejected"
+        }
+        yield f"event: done\ndata: {json.dumps(done_event)}\n\n"
+        
+        logger.info(f"[API] OUT-OF-DOMAIN STREAM COMPLETE | id={request_id} | total={total_duration:.0f}ms")
+        
+    except Exception as e:
+        duration = (time.perf_counter() - start_time) * 1000
+        logger.error(f"[API] OUT-OF-DOMAIN STREAM FAILED | id={request_id} | duration={duration:.0f}ms | error={e}")
+        error_event = {"error": str(e)}
+        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+
+
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
     """
@@ -153,7 +202,35 @@ async def chat_endpoint(request: ChatRequest):
         journal_count = len(retrieved_data.get("journals", []))
         logger.info(f"[API] Data retrieved | trades={trade_count} | journals={journal_count} | duration={retriever_duration:.0f}ms")
         
-        # 2. Handle streaming vs non-streaming
+        # 2. Check if query is in-domain (reject out-of-domain queries)
+        is_in_domain = (retriever.query_analysis or {}).get("is_in_domain", True)
+        if not is_in_domain:
+            out_of_domain_response = "I'm specifically designed to help with trading analysis and performance insights. Your question is outside my area of expertise. Please ask me about your trades, strategies, performance metrics, or trading psychology."
+            logger.info(f"[API] OUT-OF-DOMAIN query rejected | query_type={(retriever.query_analysis or {}).get('query_type', 'unknown')}")
+            
+            if request.stream:
+                return StreamingResponse(
+                    _generate_out_of_domain_response(out_of_domain_response, start_time, request_id),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no"
+                    }
+                )
+            else:
+                return ChatResponse(
+                    response=out_of_domain_response,
+                    data={},
+                    metadata={
+                        "request_id": request_id,
+                        "duration_ms": (time.perf_counter() - start_time) * 1000,
+                        "query_type": "out_of_domain",
+                        "status": "rejected"
+                    }
+                )
+        
+        # 3. Handle streaming vs non-streaming
         if request.stream:
             logger.info(f"[API] Starting SSE stream...")
             return StreamingResponse(
