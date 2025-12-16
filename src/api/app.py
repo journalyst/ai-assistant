@@ -18,6 +18,7 @@ from src.embeddings import get_embedding_dimension
 from src.logger import get_logger
 from src.orchestration.retriever import DataRetriever
 from src.llm.response_generator import ResponseGenerator
+from src.cache.session import SessionManager
 
 logger = get_logger(__name__)
 
@@ -76,7 +77,16 @@ async def generate_stream_response(
         # Stream LLM response
         llm_start = time.perf_counter()
         generator = ResponseGenerator()
-        context_str = f"Retrieved Data: {retrieved_data}"
+        
+        # Build context with session history
+        session_mgr = SessionManager()
+        session = session_mgr.get_session(request.session_id) if request.session_id else None
+        history_text = ""
+        if session and session.get("messages"):
+            history_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in session["messages"]])
+            history_text = f"Conversation History:\n{history_text}\n\n"
+        
+        context_str = f"{history_text}Retrieved Data: {retrieved_data}"
         
         # Extract date context from retriever for prompt enrichment
         date_period_context = None
@@ -101,6 +111,10 @@ async def generate_stream_response(
             yield f"event: chunk\ndata: {json.dumps({'text': chunk})}\n\n"
             # Small delay to prevent overwhelming the client
             await asyncio.sleep(0.01)
+        
+        # Save assistant response to session
+        if request.session_id:
+            session_mgr.add_message(request.session_id, "assistant", full_response)
         
         llm_duration = (time.perf_counter() - llm_start) * 1000
         
@@ -192,6 +206,20 @@ async def chat_endpoint(request: ChatRequest):
     logger.info(f"[API] Query: '{query_preview}'")
 
     try:
+        # 0. Session management - create session if needed and store user message
+        session_mgr = SessionManager()
+        if request.session_id:
+            session = session_mgr.get_session(request.session_id)
+            if not session:
+                session_mgr.create_session(request.session_id, str(request.user_id))
+            session_mgr.add_message(request.session_id, "user", request.query)
+        else:
+            # Generate session_id if not provided
+            request.session_id = str(uuid.uuid4())
+            session_mgr.create_session(request.session_id, str(request.user_id))
+            session_mgr.add_message(request.session_id, "user", request.query)
+            logger.info(f"[API] Generated new session_id: {request.session_id[:8]}...")
+        
         # 1. Retrieve Data (always done first, before streaming)
         retriever_start = time.perf_counter()
         retriever = DataRetriever(user_id=request.user_id)
@@ -246,7 +274,15 @@ async def chat_endpoint(request: ChatRequest):
         # Non-streaming response (original behavior)
         llm_start = time.perf_counter()
         generator = ResponseGenerator()
-        context_str = f"Retrieved Data: {retrieved_data}"
+        
+        # Build context with session history
+        session = session_mgr.get_session(request.session_id) if request.session_id else None
+        history_text = ""
+        if session and session.get("messages"):
+            history_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in session["messages"]])
+            history_text = f"Conversation History:\n{history_text}\n\n"
+        
+        context_str = f"{history_text}Retrieved Data: {retrieved_data}"
         
         # Extract date context from retriever for prompt enrichment
         date_period_context = None
@@ -264,6 +300,10 @@ async def chat_endpoint(request: ChatRequest):
             date_period_context=date_period_context
         )
         llm_duration = (time.perf_counter() - llm_start) * 1000
+        
+        # Save assistant response to session
+        if request.session_id:
+            session_mgr.add_message(request.session_id, "assistant", response_text)
 
         total_duration = (time.perf_counter() - start_time) * 1000
         
@@ -275,6 +315,7 @@ async def chat_endpoint(request: ChatRequest):
             data=retrieved_data,
             metadata={
                 "request_id": request_id,
+                "session_id": request.session_id,
                 "duration_ms": total_duration,
                 "retrieval_ms": retriever_duration,
                 "llm_ms": llm_duration,

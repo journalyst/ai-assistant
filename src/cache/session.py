@@ -58,14 +58,19 @@ class SessionManager:
     def get_session(session_id: str) -> Optional[dict]:
         import time
         start = time.perf_counter()
-        session_data = redis_client.get(f"session:{session_id}")
+        session_raw = redis_client.get(f"session:{session_id}")
         duration = (time.perf_counter() - start) * 1000
         
-        if not session_data:
+        if not session_raw:
             logger.info(f"[SESSION] Cache MISS | session_id={session_id[:8]}... | lookup={duration:.2f}ms")
             return None
         
-        parsed = json.loads(str(session_data))
+        # Handle bytes from Redis
+        if isinstance(session_raw, bytes):
+            parsed = json.loads(session_raw.decode('utf-8'))
+        else:
+            parsed = json.loads(str(session_raw))
+            
         msg_count = len(parsed.get("messages", []))
         token_count = parsed.get("total_token_count", 0)
         logger.info(f"[SESSION] Cache HIT | session_id={session_id[:8]}... | messages={msg_count} | tokens={token_count} | lookup={duration:.2f}ms")
@@ -75,7 +80,15 @@ class SessionManager:
         import time
         start = time.perf_counter()
         key = f"session:{session_id}"
-        session_data = json.loads(str(redis_client.get(key) or '{}'))
+        session_raw = redis_client.get(key)
+        
+        # Handle bytes or None from Redis
+        if session_raw is None:
+            session_data = {}
+        elif isinstance(session_raw, bytes):
+            session_data = json.loads(session_raw.decode('utf-8'))
+        else:
+            session_data = json.loads(str(session_raw))
         
         if session_data:
             msg_tokens = self.message_token_count(content)

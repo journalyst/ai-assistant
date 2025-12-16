@@ -6,6 +6,7 @@ class ChatRequest(BaseModel):
     query: str
     user_name: str = "Trader"
     stream: bool = False  # Enable streaming response
+    session_id: Optional[str] = None  # Session ID for conversation history
 
 class ChatResponse(BaseModel):
     response: str
