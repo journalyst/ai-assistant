@@ -47,6 +47,7 @@ class SessionManager:
             "user_id": user_id,
             "created_at": datetime.now().isoformat(),
             "messages": [],
+            "query_contexts": [],
             "model": settings.analysis_model,
             "total_token_count": 0
         }
@@ -117,3 +118,67 @@ class SessionManager:
             logger.info(f"[SESSION] Message saved | total_messages={len(session_data['messages'])} | total_tokens={session_data['total_token_count']} | save_time={duration:.2f}ms")
         else:
             logger.error(f"[SESSION] Failed to add message - session not found | session_id={session_id[:8]}...")
+    
+    def add_query_context(self, session_id: str, user_message: str, retrieved_data: dict, is_followup: bool = False, followup_ref: Optional[str] = None):
+        """Store retrieved data and metadata for a query to support follow-ups."""
+        import time
+        start = time.perf_counter()
+        key = f"session:{session_id}"
+        session_raw = redis_client.get(key)
+        
+        if session_raw is None:
+            logger.warning(f"[SESSION] Cannot add query context - session not found | session_id={session_id[:8]}...")
+            return
+        
+        if isinstance(session_raw, bytes):
+            session_data = json.loads(session_raw.decode('utf-8'))
+        else:
+            session_data = json.loads(str(session_raw))
+        
+        if "query_contexts" not in session_data:
+            session_data["query_contexts"] = []
+        
+        query_index = len(session_data.get("query_contexts", []))
+        trade_ids = [t.get("trade_id") for t in retrieved_data.get("trades", [])]
+        journal_count = len(retrieved_data.get("journals", []))
+        
+        query_context = {
+            "query_index": query_index,
+            "user_message": user_message,
+            "is_followup": is_followup,
+            "followup_ref": followup_ref,
+            "trade_ids": trade_ids,
+            "trade_count": len(trade_ids),
+            "journal_count": journal_count,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        session_data["query_contexts"].append(query_context)
+        redis_client.setex(key, 86400, json.dumps(session_data))
+        
+        duration = (time.perf_counter() - start) * 1000
+        logger.info(f"[SESSION] Query context stored | query_index={query_index} | is_followup={is_followup} | trades={len(trade_ids)} | journals={journal_count} | time={duration:.2f}ms")
+    
+    @staticmethod
+    def get_query_scope(session_id: str, query_index: int) -> Optional[dict]:
+        """Retrieve the scope (trade_ids, etc.) for a specific query to constrain follow-ups."""
+        session_raw = redis_client.get(f"session:{session_id}")
+        
+        if not session_raw:
+            return None
+        
+        if isinstance(session_raw, bytes):
+            session_data = json.loads(session_raw.decode('utf-8'))
+        else:
+            session_data = json.loads(str(session_raw))
+        
+        query_contexts = session_data.get("query_contexts", [])
+        for ctx in query_contexts:
+            if ctx.get("query_index") == query_index:
+                return {
+                    "trade_ids": ctx.get("trade_ids", []),
+                    "trade_count": ctx.get("trade_count", 0),
+                    "journal_count": ctx.get("journal_count", 0)
+                }
+        
+        return None
