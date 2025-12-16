@@ -145,15 +145,6 @@ class PromptModifier:
     ) -> str:
         """
         Generate modified system prompt with user context injected.
-        
-        Args:
-            user_name: User's name
-            current_date: Today's date string (e.g., "February 14, 2024")
-            date_period_context: Period being analyzed (e.g., "last working week (Feb 5 - Feb 9)")
-            trading_hours: User's typical trading hours
-        
-        Returns:
-            Formatted system prompt with context injected
         """
         from datetime import datetime
         

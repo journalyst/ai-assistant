@@ -24,19 +24,6 @@ class WorkingDayFilter:
     def get_last_working_week(current_date: datetime) -> Tuple[datetime, datetime]:
         """
         Get the Monday-Friday range for the last complete working week.
-        
-        Args:
-            current_date: Reference date (typically today)
-        
-        Returns:
-            Tuple of (monday, friday) for last week
-        
-        Examples:
-            If today is Wednesday 2024-02-14:
-                - Last week is 2024-02-05 (Mon) to 2024-02-09 (Fri)
-            
-            If today is Monday 2024-02-12:
-                - Last week is 2024-02-05 (Mon) to 2024-02-09 (Fri)
         """
         # Find the most recent Friday (including today if it's Friday)
         days_since_friday = (current_date.weekday() - 4) % 7
@@ -55,22 +42,6 @@ class WorkingDayFilter:
     def get_current_working_week(current_date: datetime) -> Tuple[datetime, datetime]:
         """
         Get the Monday-to-today range for the current working week.
-        
-        Args:
-            current_date: Reference date (typically today)
-        
-        Returns:
-            Tuple of (monday, today)
-        
-        Examples:
-            If today is Wednesday 2024-02-14:
-                - Current week is 2024-02-12 (Mon) to 2024-02-14 (Wed)
-            
-            If today is Friday 2024-02-16:
-                - Current week is 2024-02-12 (Mon) to 2024-02-16 (Fri)
-            
-            If today is Saturday 2024-02-17:
-                - Current week is 2024-02-12 (Mon) to 2024-02-17 (Sat, but trade data only has Mon-Fri)
         """
         days_since_monday = current_date.weekday()
         current_monday = current_date - timedelta(days=days_since_monday)
@@ -118,14 +89,6 @@ class WorkingDayFilter:
     ) -> str:
         """
         Generate a natural language description of a date range for prompt context.
-        
-        Args:
-            current_date: Today's date
-            start_date: Range start
-            end_date: Range end
-        
-        Returns:
-            String description like "last working week (Feb 5 - Feb 9)"
         """
         duration_days = (end_date - start_date).days
         
@@ -162,13 +125,6 @@ class DateQueryClassifier:
     def extract_date_context(query: str, current_date: datetime) -> Optional[Tuple[datetime, datetime, str]]:
         """
         Extract date range from query if mentioned.
-        
-        Args:
-            query: User query string
-            current_date: Today's date
-        
-        Returns:
-            Tuple of (start_date, end_date, context_description) or None if no date pattern found
         """
         query_lower = query.lower()
         
