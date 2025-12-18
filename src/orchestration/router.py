@@ -207,7 +207,8 @@ Is the current query a follow-up to the previous one?
             
             is_followup = result.get("is_followup", False)
             confidence = result.get("confidence", 0.0)
-            logger.info(f"[ROUTER] Follow-up detection complete | is_followup={is_followup} | confidence={confidence:.2f} | api_call={api_duration:.0f}ms | total={total_duration:.0f}ms")
+            reasoning = result.get("reasoning", "")
+            logger.info(f"[ROUTER] Follow-up detection complete | is_followup={is_followup} | confidence={confidence:.2f} | reasoning={reasoning} | api_call={api_duration:.0f}ms | total={total_duration:.0f}ms")
             
             return result
         
