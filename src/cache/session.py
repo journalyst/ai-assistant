@@ -119,7 +119,7 @@ class SessionManager:
         else:
             logger.error(f"[SESSION] Failed to add message - session not found | session_id={session_id[:8]}...")
     
-    def add_query_context(self, session_id: str, user_message: str, retrieved_data: dict, is_followup: bool = False, followup_ref: Optional[str] = None):
+    def add_query_context(self, session_id: str, user_message: str, retrieved_data: dict, is_followup: bool = False, followup_ref: Optional[dict] = None):
         """Store retrieved data and metadata for a query to support follow-ups."""
         import time
         start = time.perf_counter()
@@ -139,7 +139,8 @@ class SessionManager:
             session_data["query_contexts"] = []
         
         query_index = len(session_data.get("query_contexts", []))
-        trade_ids = [t.get("trade_id") for t in retrieved_data.get("trades", [])]
+        trade_entries = retrieved_data.get("trade_ids", [])
+        journal_entries = retrieved_data.get("journals", [])
         journal_count = len(retrieved_data.get("journals", []))
         
         query_context = {
@@ -147,8 +148,9 @@ class SessionManager:
             "user_message": user_message,
             "is_followup": is_followup,
             "followup_ref": followup_ref,
-            "trade_ids": trade_ids,
-            "trade_count": len(trade_ids),
+            "trade_entries": trade_entries,
+            "trade_count": len(trade_entries),
+            "journal_entries": journal_entries,
             "journal_count": journal_count,
             "timestamp": datetime.now().isoformat()
         }
@@ -157,7 +159,7 @@ class SessionManager:
         redis_client.setex(key, 86400, json.dumps(session_data))
         
         duration = (time.perf_counter() - start) * 1000
-        logger.info(f"[SESSION] Query context stored | query_index={query_index} | is_followup={is_followup} | trades={len(trade_ids)} | journals={journal_count} | time={duration:.2f}ms")
+        logger.info(f"[SESSION] Query context stored | query_index={query_index} | is_followup={is_followup} | trades={len(trade_entries)} | journals={journal_count} | time={duration:.2f}ms")
     
     @staticmethod
     def get_query_scope(session_id: str, query_index: int) -> Optional[dict]:
@@ -176,8 +178,9 @@ class SessionManager:
         for ctx in query_contexts:
             if ctx.get("query_index") == query_index:
                 return {
-                    "trade_ids": ctx.get("trade_ids", []),
+                    "trade_entries": ctx.get("trade_entries", []),
                     "trade_count": ctx.get("trade_count", 0),
+                    "journal_entries": ctx.get("journal_entries", []),
                     "journal_count": ctx.get("journal_count", 0)
                 }
         
