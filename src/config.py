@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     embedding_model: str = "all-MiniLM-L6-v2"  # Local transformer model
     embedding_provider: str = "local"  # "local" for transformers, "openai" for API
     analysis_llm_context_window: int = 128000
-    model_provider: str = "openrouter"  # "openai" or "openrouter"
+    model_provider: str = "openai"  # "openai" or "openrouter"
     router_model: str = ""
     analysis_model: str = ""
     reasoning_model: str | None = None
