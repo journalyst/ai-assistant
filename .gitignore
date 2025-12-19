@@ -1,6 +1,7 @@
 # Existing
 .github/
 Reference/
+test_client/
 
 # Virtual environments
 venv/
