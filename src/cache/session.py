@@ -1,10 +1,20 @@
 import redis
 import json
+from decimal import Decimal
+from datetime import datetime, date
 from src.config import settings
 from src.logger import get_logger
-from datetime import datetime
 from typing import List, Optional
 from tiktoken import get_encoding
+
+# Custom JSON encoder to handle PostgreSQL types (Decimal, datetime, date)
+class PostgreSQLEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        return super().default(obj)
 
 logger = get_logger(__name__)
 redis_client = redis.from_url(settings.redis_url)
@@ -52,7 +62,7 @@ class SessionManager:
             "total_token_count": 0
         }
 
-        redis_client.setex(f"session:{session_id}", 86400, json.dumps(session_data))  # Expires in 24 hours
+        redis_client.setex(f"session:{session_id}", 86400, json.dumps(session_data, cls=PostgreSQLEncoder))  # Expires in 24 hours
         logger.info(f"[SESSION] Session created and cached in Redis (TTL=24h)")
 
     @staticmethod
@@ -113,7 +123,7 @@ class SessionManager:
                 new_count = len(session_data["messages"])
                 logger.info(f"[SESSION] Trimmed {old_count - new_count} messages | new_tokens={session_data['total_token_count']}")
 
-            redis_client.setex(key, 86400, json.dumps(session_data))  # Refresh expiry
+            redis_client.setex(key, 86400, json.dumps(session_data, cls=PostgreSQLEncoder))  # Refresh expiry
             duration = (time.perf_counter() - start) * 1000
             logger.info(f"[SESSION] Message saved | total_messages={len(session_data['messages'])} | total_tokens={session_data['total_token_count']} | save_time={duration:.2f}ms")
         else:
@@ -137,9 +147,11 @@ class SessionManager:
         
         if "query_contexts" not in session_data:
             session_data["query_contexts"] = []
+
+        logger.info(f"[SESSION] Adding query context | session_id={session_id[:8]}... | is_followup={is_followup}")
         
         query_index = len(session_data.get("query_contexts", []))
-        trade_entries = retrieved_data.get("trade_ids", [])
+        trade_entries = retrieved_data.get("trades", [])
         journal_entries = retrieved_data.get("journals", [])
         journal_count = len(retrieved_data.get("journals", []))
         
@@ -156,7 +168,7 @@ class SessionManager:
         }
         
         session_data["query_contexts"].append(query_context)
-        redis_client.setex(key, 86400, json.dumps(session_data))
+        redis_client.setex(key, 86400, json.dumps(session_data, cls=PostgreSQLEncoder))
         
         duration = (time.perf_counter() - start) * 1000
         logger.info(f"[SESSION] Query context stored | query_index={query_index} | is_followup={is_followup} | trades={len(trade_entries)} | journals={journal_count} | time={duration:.2f}ms")
