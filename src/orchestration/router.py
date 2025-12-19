@@ -99,6 +99,7 @@ class QueryRouter:
         
         try:
             if self.provider == "openrouter":
+                logger.info(f"[ROUTER] Sending request to OpenRouter model '{self.model}'")
                 api_start = time.perf_counter()
                 response = self.client.chat.completions.create(
                     model=self.model,
@@ -117,14 +118,14 @@ class QueryRouter:
                 if usage:
                     logger.debug(f"[ROUTER] Token usage: input={usage.prompt_tokens}, output={usage.completion_tokens}, total={usage.total_tokens}")
             else:
+                logger.info(f"[ROUTER] Sending request to OpenAI model '{self.model}'")
                 api_start = time.perf_counter()
                 response = self.client.responses.create(
                     model=self.model,
                     input=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_query}
-                    ],
-                    temperature=0
+                    ]
                 )
                 api_duration = (time.perf_counter() - api_start) * 1000
                 content = response.output_text
@@ -193,8 +194,7 @@ Is the current query a follow-up to the previous one?
                     input=[
                         {"role": "system", "content": followup_detection_prompt},
                         {"role": "user", "content": prompt}
-                    ],
-                    temperature=0
+                    ]
                 )
                 api_duration = (time.perf_counter() - api_start) * 1000
                 content = response.output_text
