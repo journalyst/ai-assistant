@@ -135,12 +135,12 @@ async def generate_stream_response(
         yield f"event: done\ndata: {json.dumps(done_event)}\n\n"
         
         logger.info(f"[API] STREAM COMPLETE | id={request_id} | llm={llm_duration:.0f}ms | total={total_duration:.0f}ms | chunks={chunk_count}")
-        logger.info(f"[API] ════════════════════════════════════════════════════════")
+        logger.info("[API] " + "="*60)
         
     except Exception as e:
         duration = (time.perf_counter() - start_time) * 1000
         logger.error(f"[API] STREAM FAILED | id={request_id} | duration={duration:.0f}ms | error={e}")
-        logger.info(f"[API] ════════════════════════════════════════════════════════")
+        logger.info("[API] " + "="*60)
         error_event = {"error": str(e)}
         yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
 
@@ -193,7 +193,6 @@ async def _generate_out_of_domain_response(
         error_event = {"error": str(e)}
         yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
 
-
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
     """
@@ -205,16 +204,19 @@ async def chat_endpoint(request: ChatRequest):
     start_time = time.perf_counter()
     query_preview = request.query[:60] + "..." if len(request.query) > 60 else request.query
     
-    logger.info(f"[API] ════════════════════════════════════════════════════════")
-    logger.info(f"[API] REQUEST START | id={request_id} | user={request.user_id} | stream={request.stream}")
+    logger.info("[API] " + "="*60)
+    logger.info(f"[API] REQUEST START | id={request_id} | user={request.user_id} | stream={request.stream} | session_id={request.session_id[:8] + '...' if request.session_id else 'none'}")
     logger.info(f"[API] Query: '{query_preview}'")
 
     try:
-        # 0. Session management - create session if needed
+        # Session management - create session if needed
+        logger.info(f"[API] Managing session...")
         session_mgr = SessionManager()
         if request.session_id:
+            logger.info(f"[API] Using provided session_id: {request.session_id[:8]}...")
             session = session_mgr.get_session(request.session_id)
             if not session:
+                logger.info(f"[API] Session not found for provided session_id: {request.session_id[:8]}... Creating new session.")
                 session_mgr.create_session(request.session_id, str(request.user_id))
         else:
             # Generate session_id if not provided
@@ -222,12 +224,14 @@ async def chat_endpoint(request: ChatRequest):
             session_mgr.create_session(request.session_id, str(request.user_id))
             logger.info(f"[API] Generated new session_id: {request.session_id[:8]}...")
         
-        # 0.5 Detect if this is a follow-up query BEFORE adding current message
+        # Detect if this is a follow-up query BEFORE adding current message
+        logger.info(f"[API] Checking for follow-up query...")
         session = session_mgr.get_session(request.session_id)
         messages = session.get("messages", []) if session else []
         previous_query = None
         is_followup = False
         followup_ref = None
+        confidence = 0.0
         
         # Look for the last user message in the existing conversation
         if len(messages) >= 2:
@@ -238,44 +242,59 @@ async def chat_endpoint(request: ChatRequest):
                     logger.info(f"[API] Found previous query: '{previous_query[:50]}...'")
                     break
             
-            if previous_query:
-                from src.orchestration.router import QueryRouter
-                router = QueryRouter()
-                followup_detection = router.detect_followup(request.query, previous_query)
-                is_followup = followup_detection.get("is_followup", False)
-                confidence = followup_detection.get("confidence", 0.0)
-                logger.info(f"[API] Follow-up detection result | is_followup={is_followup} | confidence={confidence:.2f}")
-                
-                if is_followup and confidence >= 0.6:
-                    # Get the last query context for scope reference
-                    contexts = session.get("query_contexts", []) if session else []
-                    followup_ref = str(len(contexts) - 1) if contexts else None
+        if previous_query:
+            from src.orchestration.router import QueryRouter
+            logger.info(f"[API] Analyzing for follow-up using QueryRouter...")
+            router = QueryRouter()
+            followup_detection = router.detect_followup(request.query, previous_query)
+            is_followup = followup_detection.get("is_followup", False)
+            confidence = followup_detection.get("confidence", 0.0)
+            
+        if is_followup and confidence >= 0.6:
+            # Get the last query context for scope reference
+            logger.info(f"[API] Follow-up query detected with confidence {confidence:.2f}. Reusing previous context.")
+            contexts = (session.get("query_contexts") or []) if session else []
+            followup_ref = contexts[-1] if contexts else {}
+
+            # logger.info(f"[API] Follow-up reference context obtained:  {followup_ref}")
+
+            # For follow-up queries, skip data retrieval and reuse previous data
+            retrieved_data = {
+                "trades": followup_ref.get("trade_entries", []),
+                "journals": followup_ref.get("journal_entries", [])
+            }
+            retriever_duration = 0.0
+            logger.info(f"[API] Skipping data retrieval for follow-up query")
         
-        # Now add the current user message to session
+        else:
+            logger.info(f"[API] Not a follow-up query. Retrieving data...")
+            # Retrieve Data if not a follow-up
+            retriever_start = time.perf_counter()
+            retriever = DataRetriever(user_id=request.user_id)
+            retrieved_data = retriever.retrieve_data(request.query)
+            retriever_duration = (time.perf_counter() - retriever_start) * 1000
+            
+            trade_count = len(retrieved_data.get("trades", []))
+            journal_count = len(retrieved_data.get("journals", []))
+            logger.info(f"[API] Data retrieved | trades={trade_count} | journals={journal_count} | duration={retriever_duration:.0f}ms")
+            
+            # Store query context for future follow-ups
+            session_mgr.add_query_context(
+                request.session_id,
+                request.query,
+                retrieved_data,
+                is_followup=is_followup,
+                followup_ref=followup_ref
+            )
+        
+        logger.info(f"[API] Session management complete | session_id={request.session_id[:8]}...")
+
+        # Add current user message to session
         session_mgr.add_message(request.session_id, "user", request.query)
 
-        logger.info(f"[API] is_followup={is_followup} | followup_ref={followup_ref}")
-        
-        # 1. Retrieve Data (always done first, before streaming)
-        retriever_start = time.perf_counter()
-        retriever = DataRetriever(user_id=request.user_id)
-        retrieved_data = retriever.retrieve_data(request.query)
-        retriever_duration = (time.perf_counter() - retriever_start) * 1000
-        
-        trade_count = len(retrieved_data.get("trades", []))
-        journal_count = len(retrieved_data.get("journals", []))
-        logger.info(f"[API] Data retrieved | trades={trade_count} | journals={journal_count} | duration={retriever_duration:.0f}ms")
-        
-        # 1.5 Store query context for future follow-ups
-        session_mgr.add_query_context(
-            request.session_id,
-            request.query,
-            retrieved_data,
-            is_followup=is_followup,
-            followup_ref=followup_ref
-        )
-        
-        # 2. Check if query is in-domain (reject out-of-domain queries)
+        # Check if query is in-domain (reject out-of-domain queries)
+        retriever = DataRetriever(user_id=request.user_id)  # Re-instantiate to access analysis
+        logger.info(f"[API] Checking if query is in-domain...")
         is_in_domain = (retriever.query_analysis or {}).get("is_in_domain", True)
         if not is_in_domain:
             out_of_domain_response = "I'm specifically designed to help with trading analysis and performance insights. Your question is outside my area of expertise. Please ask me about your trades, strategies, performance metrics, or trading psychology."
@@ -303,7 +322,7 @@ async def chat_endpoint(request: ChatRequest):
                     }
                 )
         
-        # 3. Handle streaming vs non-streaming
+        # Handle streaming vs non-streaming
         if request.stream:
             logger.info(f"[API] Starting SSE stream...")
             return StreamingResponse(
@@ -364,7 +383,7 @@ async def chat_endpoint(request: ChatRequest):
         total_duration = (time.perf_counter() - start_time) * 1000
         
         logger.info(f"[API] REQUEST COMPLETE | id={request_id} | retrieval={retriever_duration:.0f}ms | llm={llm_duration:.0f}ms | total={total_duration:.0f}ms")
-        logger.info(f"[API] ════════════════════════════════════════════════════════")
+        logger.info("[API] " + "="*60)
 
         return ChatResponse(
             response=response_text,
@@ -382,7 +401,7 @@ async def chat_endpoint(request: ChatRequest):
     except Exception as e:
         duration = (time.perf_counter() - start_time) * 1000
         logger.error(f"[API] REQUEST FAILED | id={request_id} | duration={duration:.0f}ms | error={e}")
-        logger.info(f"[API] ════════════════════════════════════════════════════════")
+        logger.info("[API] " + "="*60)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")
