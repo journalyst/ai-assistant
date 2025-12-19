@@ -39,7 +39,7 @@ class ResponseGenerator:
             self.client = get_openai_client()
         self.model = settings.analysis_model
 
-    def generate_response(self, user_query: str, context: str, user_name: str = "Trader", current_date: Optional[str] = None, date_period_context: Optional[str] = None) -> str:
+    def generate_response(self, user_query: str, context: str, user_name: str = "Trader", current_date: Optional[str] = None, date_period_context: Optional[str] = None, is_followup: bool = False, trade_scope: Optional[list] = None) -> str:
         """
         Generates a response using the configured LLM provider (non-streaming).
         """
@@ -47,7 +47,7 @@ class ResponseGenerator:
         query_preview = user_query[:50] + "..." if len(user_query) > 50 else user_query
         context_size = len(context)
         
-        logger.info(f"[LLM] Starting response generation | provider={self.provider} | model={self.model} | query='{query_preview}'")
+        logger.info(f"[LLM] Starting response generation | provider={self.provider} | model={self.model} | is_followup={is_followup} | query='{query_preview}'")
         logger.debug(f"[LLM] Context size: {context_size} chars")
 
         formatted_system_prompt = PromptModifier.get_modified_prompt(
@@ -55,6 +55,20 @@ class ResponseGenerator:
             current_date=current_date or "",
             date_period_context=date_period_context or ""
         )
+        
+        # Inject scope constraint for follow-ups
+        followup_constraint = ""
+        if is_followup and trade_scope:
+            trade_ids_str = ", ".join(str(tid) for tid in trade_scope)
+            followup_constraint = f"""
+[SCOPE CONSTRAINT - THIS IS A FOLLOW-UP QUESTION]
+Analyze ONLY the trades from the previous query: [{trade_ids_str}]
+Do NOT fetch or analyze other trades. Stay focused on these specific trades and their details.
+Previous context: {len(trade_scope)} trades in scope
+[END SCOPE]
+
+"""
+            logger.info(f"[LLM] Follow-up scope constraint applied | trade_ids={trade_ids_str[:50]}...")
 
         try:
             api_start = time.perf_counter()
@@ -63,7 +77,7 @@ class ResponseGenerator:
                     model=self.model,
                     messages=[
                         {"role": "system", "content": formatted_system_prompt},
-                        {"role": "user", "content": f"Context:\n{context}\n\nUser Query:\n{user_query}"}
+                        {"role": "user", "content": f"{followup_constraint}Context:\n{context}\n\nUser Query:\n{user_query}"}
                     ],
                     temperature=0.7,
                 )
@@ -107,7 +121,9 @@ class ResponseGenerator:
         context: str, 
         user_name: str = "Trader",
         current_date: Optional[str] = None,
-        date_period_context: Optional[str] = None
+        date_period_context: Optional[str] = None,
+        is_followup: bool = False,
+        trade_scope: Optional[list] = None
     ) -> Generator[str, None, None]:
         """
         Generates a streaming response using the configured LLM provider.
@@ -117,7 +133,7 @@ class ResponseGenerator:
         query_preview = user_query[:50] + "..." if len(user_query) > 50 else user_query
         context_size = len(context)
         
-        logger.info(f"[LLM_STREAM] Starting streaming response | provider={self.provider} | model={self.model} | query='{query_preview}'")
+        logger.info(f"[LLM_STREAM] Starting streaming response | provider={self.provider} | model={self.model} | is_followup={is_followup} | query='{query_preview}'")
         logger.debug(f"[LLM_STREAM] Context size: {context_size} chars")
 
         formatted_system_prompt = PromptModifier.get_modified_prompt(
@@ -125,6 +141,21 @@ class ResponseGenerator:
             current_date=current_date or "",
             date_period_context=date_period_context or ""
         )
+        
+        # Inject scope constraint for follow-ups
+        followup_constraint = ""
+        if is_followup and trade_scope:
+            trade_ids_str = ", ".join(str(tid) for tid in trade_scope)
+            followup_constraint = f"""
+[SCOPE CONSTRAINT - THIS IS A FOLLOW-UP QUESTION]
+Analyze ONLY the trades from the previous query: [{trade_ids_str}]
+Do NOT fetch or analyze other trades. Stay focused on these specific trades and their details.
+Previous context: {len(trade_scope)} trades in scope
+[END SCOPE]
+
+"""
+            logger.info(f"[LLM_STREAM] Follow-up scope constraint applied | trade_ids={trade_ids_str[:50]}...")
+        
         full_response = ""
         chunk_count = 0
         first_chunk_time = None
@@ -137,7 +168,7 @@ class ResponseGenerator:
                     model=self.model,
                     messages=[
                         {"role": "system", "content": formatted_system_prompt},
-                        {"role": "user", "content": f"Context:\n{context}\n\nUser Query:\n{user_query}"}
+                        {"role": "user", "content": f"{followup_constraint}Context:\n{context}\n\nUser Query:\n{user_query}"}
                     ],
                     temperature=0.7,
                     stream=True,
