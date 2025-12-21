@@ -142,7 +142,6 @@ AI Assistant/
 ├── sample_data/        # Sample SQL & journal data
 ├── scripts/            # PowerShell scripts (local dev)
 ├── docker_scripts/     # Bash scripts (Docker)
-└── tests/              # Unit tests
 ```
 
 ---
@@ -170,16 +169,3 @@ The app uses [OpenRouter](https://openrouter.ai/) by default, which gives you ac
 - `meta-llama/llama-3.3-70b-instruct:free` - Free tier
 
 ---
-
-## Running Tests
-
-```powershell
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=src
-
-# Run specific test file
-pytest tests/test_router.py -v
-```
