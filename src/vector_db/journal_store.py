@@ -96,3 +96,50 @@ class JournalStore:
             duration = (time.perf_counter() - total_start) * 1000
             logger.error(f"[VECTOR_SEARCH] Failed after {duration:.2f}ms | user_id={user_id} | error={e}")
             raise
+    
+    @classmethod
+    def get_journals_by_ids(cls, user_id: int, journal_ids: List[str], include_text: bool = False) -> List[dict]:
+        """Retrieve specific journal entries by IDs (for follow-up scope anchoring)."""
+        import time
+        if not journal_ids:
+            logger.debug(f"get_journals_by_ids called with empty journal_ids for user {user_id}")
+            return []
+        
+        total_start = time.perf_counter()
+        logger.info(f"[VECTOR_RETRIEVE] Fetching {len(journal_ids)} journals by ID | user_id={user_id} | include_text={include_text}")
+        
+        try:
+            client = connector.get_qdrant_client()
+            
+            # Retrieve specific points by ID
+            retrieve_start = time.perf_counter()
+            retrieved_points = client.retrieve(
+                collection_name=cls.COLLECTION_NAME,
+                ids=journal_ids,
+                with_payload=True,
+                with_vectors=False
+            )
+            retrieve_duration = (time.perf_counter() - retrieve_start) * 1000
+            
+            # Filter by user_id for security (Qdrant retrieve doesn't support filters)
+            results = []
+            for point in retrieved_points:
+                if point.payload and point.payload.get("user_id") == user_id: # type: ignore
+                    result = {
+                        "id": point.id,
+                        "tags": point.payload.get("tags", []), # type: ignore
+                        "created_at": point.payload.get("created_at", "") # type: ignore
+                    }
+                    # Optionally include text (defaults to False for compact context)
+                    if include_text:
+                        result["text"] = point.payload.get("text", "") # type: ignore
+                    results.append(result)
+            
+            total_duration = (time.perf_counter() - total_start) * 1000
+            logger.info(f"[VECTOR_RETRIEVE] Retrieved {len(results)} journals | retrieve={retrieve_duration:.0f}ms | total={total_duration:.0f}ms")
+            
+            return results
+        except Exception as e:
+            duration = (time.perf_counter() - total_start) * 1000
+            logger.error(f"[VECTOR_RETRIEVE] Failed after {duration:.2f}ms | user_id={user_id} | error={e}")
+            raise
