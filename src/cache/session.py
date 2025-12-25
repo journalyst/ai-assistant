@@ -129,8 +129,8 @@ class SessionManager:
         else:
             logger.error(f"[SESSION] Failed to add message - session not found | session_id={session_id[:8]}...")
     
-    def add_query_context(self, session_id: str, user_message: str, retrieved_data: dict, is_followup: bool = False, followup_ref: Optional[dict] = None):
-        """Store retrieved data and metadata for a query to support follow-ups."""
+    def add_query_context(self, session_id: str, user_message: str, retrieved_data: dict, is_followup: bool = False, followup_ref: Optional[dict] = None, date_range: Optional[tuple] = None):
+        """Store only identifiers and minimal metadata for a query to support follow-ups."""
         import time
         start = time.perf_counter()
         key = f"session:{session_id}"
@@ -151,31 +151,61 @@ class SessionManager:
         logger.info(f"[SESSION] Adding query context | session_id={session_id[:8]}... | is_followup={is_followup}")
         
         query_index = len(session_data.get("query_contexts", []))
-        trade_entries = retrieved_data.get("trades", [])
-        journal_entries = retrieved_data.get("journals", [])
-        journal_count = len(retrieved_data.get("journals", []))
+        
+        # Extract IDs only (no raw data)
+        trade_ids = [t.get("trade_id") for t in retrieved_data.get("trades", []) if t.get("trade_id")]
+        journal_ids = [j.get("id") for j in retrieved_data.get("journals", []) if j.get("id")]
+        
+        # Enforce ID limits to prevent session bloat
+        max_trade_ids = 500
+        max_journal_ids = 200
+        truncated = False
+        original_trade_count = len(trade_ids)
+        original_journal_count = len(journal_ids)
+        
+        if len(trade_ids) > max_trade_ids:
+            trade_ids = trade_ids[:max_trade_ids]
+            truncated = True
+            logger.warning(f"[SESSION] Truncated trade_ids from {original_trade_count} to {max_trade_ids}")
+        
+        if len(journal_ids) > max_journal_ids:
+            journal_ids = journal_ids[:max_journal_ids]
+            truncated = True
+            logger.warning(f"[SESSION] Truncated journal_ids from {original_journal_count} to {max_journal_ids}")
         
         query_context = {
             "query_index": query_index,
             "user_message": user_message,
             "is_followup": is_followup,
             "followup_ref": followup_ref,
-            "trade_entries": trade_entries,
-            "trade_count": len(trade_entries),
-            "journal_entries": journal_entries,
-            "journal_count": journal_count,
-            "timestamp": datetime.now().isoformat()
+            "trade_ids": trade_ids,
+            "trade_count": len(trade_ids),
+            "journal_ids": journal_ids,
+            "journal_count": len(journal_ids),
+            "timestamp": datetime.now().isoformat(),
+            "truncated": truncated,
+            "original_trade_count": original_trade_count if truncated else len(trade_ids),
+            "original_journal_count": original_journal_count if truncated else len(journal_ids)
         }
+        
+        # Store minimal date_range metadata if provided
+        if date_range:
+            query_context["date_range"] = {
+                "start": date_range[0].isoformat() if date_range[0] else None,
+                "end": date_range[1].isoformat() if date_range[1] else None
+            }
         
         session_data["query_contexts"].append(query_context)
         redis_client.setex(key, 86400, json.dumps(session_data, cls=PostgreSQLEncoder))
         
         duration = (time.perf_counter() - start) * 1000
-        logger.info(f"[SESSION] Query context stored | query_index={query_index} | is_followup={is_followup} | trades={len(trade_entries)} | journals={journal_count} | time={duration:.2f}ms")
+        trade_preview = f"{trade_ids[:5]}..." if len(trade_ids) > 5 else str(trade_ids)
+        journal_preview = f"{journal_ids[:5]}..." if len(journal_ids) > 5 else str(journal_ids)
+        logger.info(f"[SESSION] Query context stored | query_index={query_index} | is_followup={is_followup} | trades={len(trade_ids)} {trade_preview} | journals={len(journal_ids)} {journal_preview} | truncated={truncated} | time={duration:.2f}ms")
     
     @staticmethod
     def get_query_scope(session_id: str, query_index: int) -> Optional[dict]:
-        """Retrieve the scope (trade_ids, etc.) for a specific query to constrain follow-ups."""
+        """Retrieve the scope (trade_ids, journal_ids, etc.) for a specific query to constrain follow-ups."""
         session_raw = redis_client.get(f"session:{session_id}")
         
         if not session_raw:
@@ -189,11 +219,33 @@ class SessionManager:
         query_contexts = session_data.get("query_contexts", [])
         for ctx in query_contexts:
             if ctx.get("query_index") == query_index:
-                return {
-                    "trade_entries": ctx.get("trade_entries", []),
-                    "trade_count": ctx.get("trade_count", 0),
-                    "journal_entries": ctx.get("journal_entries", []),
-                    "journal_count": ctx.get("journal_count", 0)
+                # Backward compatibility: migrate legacy contexts with full data
+                trade_ids = ctx.get("trade_ids")
+                journal_ids = ctx.get("journal_ids")
+                
+                # Extract IDs from legacy trade_entries/journal_entries if needed
+                if trade_ids is None and "trade_entries" in ctx:
+                    trade_ids = [t.get("trade_id") for t in ctx.get("trade_entries", []) if t.get("trade_id")]
+                    logger.warning(f"[SESSION] Legacy context detected (query_index={query_index}) - extracted {len(trade_ids)} trade_ids from trade_entries")
+                
+                if journal_ids is None and "journal_entries" in ctx:
+                    journal_ids = [j.get("id") for j in ctx.get("journal_entries", []) if j.get("id")]
+                    logger.warning(f"[SESSION] Legacy context detected (query_index={query_index}) - extracted {len(journal_ids)} journal_ids from journal_entries")
+                
+                scope = {
+                    "trade_ids": trade_ids or [],
+                    "trade_count": ctx.get("trade_count", len(trade_ids or [])),
+                    "journal_ids": journal_ids or [],
+                    "journal_count": ctx.get("journal_count", len(journal_ids or [])),
+                    "truncated": ctx.get("truncated", False),
+                    "original_trade_count": ctx.get("original_trade_count"),
+                    "original_journal_count": ctx.get("original_journal_count")
                 }
+                
+                # Include date_range if available
+                if "date_range" in ctx:
+                    scope["date_range"] = ctx["date_range"]
+                
+                return scope
         
         return None

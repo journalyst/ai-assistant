@@ -5,7 +5,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from .schemas import ChatRequest, ChatResponse
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import AsyncGenerator, Optional
 import platform
@@ -22,8 +23,53 @@ from src.cache.session import SessionManager
 
 logger = get_logger(__name__)
 
+# JSON encoder to handle Decimal (and ensure safe serialization of trade data)
+class PostgreSQLEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        return super().default(obj)
+
 # Path to test client
 TEST_CLIENT_DIR = Path(__file__).parent.parent.parent / "test_client"
+
+def _build_compact_context(retrieved_data: dict, is_followup: bool = False, anchor_scope: Optional[dict] = None) -> str:
+    """Build a compact context summary without raw data rows."""
+    trade_count = len(retrieved_data.get("trades", []))
+    journal_count = len(retrieved_data.get("journals", []))
+    
+    # Extract summary stats from trades
+    trades = retrieved_data.get("trades", [])
+    total_pnl = sum(t.get("pnl", 0) for t in trades) if trades else 0
+    symbols = list(set(t.get("symbol", "N/A") for t in trades)) if trades else []
+    
+    # Build context text
+    context_parts = []
+    
+    if is_followup and anchor_scope:
+        context_parts.append(f"FOLLOW-UP CONTEXT (analyzing previous query scope):")
+        context_parts.append(f"- Anchor trades: {len(anchor_scope.get('trade_ids', []))} IDs")
+        context_parts.append(f"- Anchor journals: {len(anchor_scope.get('journal_ids', []))} IDs")
+        if anchor_scope.get("date_range"):
+            dr = anchor_scope["date_range"]
+            context_parts.append(f"- Date range: {dr.get('start', 'N/A')} to {dr.get('end', 'N/A')}")
+    else:
+        context_parts.append(f"DATA SUMMARY:")
+    
+    if trade_count > 0:
+        context_parts.append(f"- Trades retrieved: {trade_count}")
+        context_parts.append(f"- Total P&L: ${total_pnl:.2f}")
+        context_parts.append(f"- Symbols: {', '.join(symbols[:10])}{'...' if len(symbols) > 10 else ''}")
+        context_parts.append(f"- Trade details: {json.dumps(trades, cls=PostgreSQLEncoder)}")  # Still include full data for LLM analysis
+    
+    if journal_count > 0:
+        journals = retrieved_data.get("journals", [])
+        context_parts.append(f"- Journal entries retrieved: {journal_count}")
+        context_parts.append(f"- Journal details: {json.dumps(journals, cls=PostgreSQLEncoder)}")  # Include full journals for LLM
+    
+    return "\n".join(context_parts)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -55,7 +101,8 @@ async def generate_stream_response(
     start_time: float,
     request_id: str = "unknown",
     is_followup: bool = False,
-    trade_scope: Optional[list] = None
+    trade_scope: Optional[list] = None,
+    anchor_scope: Optional[dict] = None
 ) -> AsyncGenerator[str, None]:
     """
     Async generator for Server-Sent Events (SSE) streaming.
@@ -70,11 +117,11 @@ async def generate_stream_response(
                 "query_type": retriever.query_analysis.get("query_type") if retriever.query_analysis else "unknown"
             }
         }
-        yield f"event: start\ndata: {json.dumps(start_event['data'])}\n\n"
+        yield f"event: start\ndata: {json.dumps(start_event['data'], cls=PostgreSQLEncoder)}\n\n"
         
         # Send retrieved data
         data_event = {"trade_data": retrieved_data.get("trade_data", []), "journal_data": retrieved_data.get("journal_data", [])}
-        yield f"event: data\ndata: {json.dumps(data_event)}\n\n"
+        yield f"event: data\ndata: {json.dumps(data_event, cls=PostgreSQLEncoder)}\n\n"
         
         # Stream LLM response
         llm_start = time.perf_counter()
@@ -88,7 +135,9 @@ async def generate_stream_response(
             history_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in session["messages"]])
             history_text = f"Conversation History:\n{history_text}\n\n"
         
-        context_str = f"{history_text}Retrieved Data: {retrieved_data}"
+        # Build compact context summary
+        compact_context = _build_compact_context(retrieved_data, is_followup, anchor_scope)
+        context_str = f"{history_text}{compact_context}"
         
         # Extract date context from retriever for prompt enrichment
         date_period_context = None
@@ -112,7 +161,7 @@ async def generate_stream_response(
             full_response += chunk
             chunk_count += 1
             # Send each text chunk
-            yield f"event: chunk\ndata: {json.dumps({'text': chunk})}\n\n"
+            yield f"event: chunk\ndata: {json.dumps({'text': chunk}, cls=PostgreSQLEncoder)}\n\n"
             # Small delay to prevent overwhelming the client
             await asyncio.sleep(0.01)
         
@@ -132,17 +181,17 @@ async def generate_stream_response(
             "chunks": chunk_count,
             "query_type": retriever.query_analysis.get("query_type") if retriever.query_analysis else "unknown"
         }
-        yield f"event: done\ndata: {json.dumps(done_event)}\n\n"
+        yield f"event: done\ndata: {json.dumps(done_event, cls=PostgreSQLEncoder)}\n\n"
         
         logger.info(f"[API] STREAM COMPLETE | id={request_id} | llm={llm_duration:.0f}ms | total={total_duration:.0f}ms | chunks={chunk_count}")
         logger.info("[API] " + "="*60)
         
     except Exception as e:
         duration = (time.perf_counter() - start_time) * 1000
-        logger.error(f"[API] STREAM FAILED | id={request_id} | duration={duration:.0f}ms | error={e}")
+        logger.exception(f"[API] STREAM FAILED | id={request_id} | duration={duration:.0f}ms | error={e}")
         logger.info("[API] " + "="*60)
         error_event = {"error": str(e)}
-        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+        yield f"event: error\ndata: {json.dumps(error_event, cls=PostgreSQLEncoder)}\n\n"
 
 
 async def _generate_out_of_domain_response(
@@ -164,14 +213,14 @@ async def _generate_out_of_domain_response(
                 "status": "rejected"
             }
         }
-        yield f"event: start\ndata: {json.dumps(start_event['data'])}\n\n"
+        yield f"event: start\ndata: {json.dumps(start_event['data'], cls=PostgreSQLEncoder)}\n\n"
         
         # Send data event (empty for out-of-domain)
         data_event = {"trade_data": [], "journal_data": []}
-        yield f"event: data\ndata: {json.dumps(data_event)}\n\n"
+        yield f"event: data\ndata: {json.dumps(data_event, cls=PostgreSQLEncoder)}\n\n"
         
         # Send response as single chunk
-        yield f"event: chunk\ndata: {json.dumps({'text': response_text})}\n\n"
+        yield f"event: chunk\ndata: {json.dumps({'text': response_text}, cls=PostgreSQLEncoder)}\n\n"
         
         # Send done event
         total_duration = (time.perf_counter() - start_time) * 1000
@@ -183,15 +232,15 @@ async def _generate_out_of_domain_response(
             "query_type": "out_of_domain",
             "status": "rejected"
         }
-        yield f"event: done\ndata: {json.dumps(done_event)}\n\n"
+        yield f"event: done\ndata: {json.dumps(done_event, cls=PostgreSQLEncoder)}\n\n"
         
         logger.info(f"[API] OUT-OF-DOMAIN STREAM COMPLETE | id={request_id} | total={total_duration:.0f}ms")
         
     except Exception as e:
         duration = (time.perf_counter() - start_time) * 1000
-        logger.error(f"[API] OUT-OF-DOMAIN STREAM FAILED | id={request_id} | duration={duration:.0f}ms | error={e}")
+        logger.exception(f"[API] OUT-OF-DOMAIN STREAM FAILED | id={request_id} | duration={duration:.0f}ms | error={e}")
         error_event = {"error": str(e)}
-        yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+        yield f"event: error\ndata: {json.dumps(error_event, cls=PostgreSQLEncoder)}\n\n"
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
@@ -231,7 +280,7 @@ async def chat_endpoint(request: ChatRequest):
         previous_query = None
         is_followup = False
         followup_ref = None
-        confidence = 0.0
+        anchor_scope = None
         
         # Look for the last user message in the existing conversation
         if len(messages) >= 2:
@@ -242,55 +291,54 @@ async def chat_endpoint(request: ChatRequest):
                     logger.info(f"[API] Found previous query: '{previous_query[:50]}...'")
                     break
             
-        if previous_query:
-            from src.orchestration.router import QueryRouter
-            logger.info(f"[API] Analyzing for follow-up using QueryRouter...")
-            router = QueryRouter()
-            followup_detection = router.detect_followup(request.query, previous_query)
-            is_followup = followup_detection.get("is_followup", False)
-            confidence = followup_detection.get("confidence", 0.0)
-            
-        if is_followup and confidence >= 0.6:
-            # Get the last query context for scope reference
-            logger.info(f"[API] Follow-up query detected with confidence {confidence:.2f}. Reusing previous context.")
-            contexts = (session.get("query_contexts") or []) if session else []
-            followup_ref = contexts[-1] if contexts else {}
-
-            # logger.info(f"[API] Follow-up reference context obtained:  {followup_ref}")
-
-            # For follow-up queries, skip data retrieval and reuse previous data
-            retrieved_data = {
-                "trades": followup_ref.get("trade_entries", []),
-                "journals": followup_ref.get("journal_entries", [])
-            }
-            retriever_duration = 0.0
-            logger.info(f"[API] Skipping data retrieval for follow-up query")
+            if previous_query:
+                from src.orchestration.router import QueryRouter
+                router = QueryRouter()
+                followup_detection = router.detect_followup(request.query, previous_query)
+                is_followup = followup_detection.get("is_followup", False)
+                confidence = followup_detection.get("confidence", 0.0)
+                logger.info(f"[API] Follow-up detection result | is_followup={is_followup} | confidence={confidence:.2f}")
+                
+                if is_followup and confidence >= 0.6:
+                    # Get the last query context for scope reference
+                    contexts = session.get("query_contexts", []) if session else []
+                    followup_ref = str(len(contexts) - 1) if contexts else None
+                    
+                    # Build anchor_scope from prior query IDs
+                    if followup_ref is not None:
+                        anchor_scope = session_mgr.get_query_scope(request.session_id, int(followup_ref))
+                        if anchor_scope:
+                            trade_ids_preview = anchor_scope.get("trade_ids", [])[:5]
+                            journal_ids_preview = anchor_scope.get("journal_ids", [])[:5]
+                            logger.info(f"[API] Anchor scope retrieved | trade_ids={len(anchor_scope.get('trade_ids', []))} {trade_ids_preview}... | journal_ids={len(anchor_scope.get('journal_ids', []))} {journal_ids_preview}...")
+                        else:
+                            logger.warning(f"[API] Could not retrieve anchor scope for followup_ref={followup_ref}")
         
-        else:
-            logger.info(f"[API] Not a follow-up query. Retrieving data...")
-            # Retrieve Data if not a follow-up
-            retriever_start = time.perf_counter()
-            retriever = DataRetriever(user_id=request.user_id)
-            retrieved_data = retriever.retrieve_data(request.query)
-            retriever_duration = (time.perf_counter() - retriever_start) * 1000
-            
-            trade_count = len(retrieved_data.get("trades", []))
-            journal_count = len(retrieved_data.get("journals", []))
-            logger.info(f"[API] Data retrieved | trades={trade_count} | journals={journal_count} | duration={retriever_duration:.0f}ms")
-            
-            # Store query context for future follow-ups
-            session_mgr.add_query_context(
-                request.session_id,
-                request.query,
-                retrieved_data,
-                is_followup=is_followup,
-                followup_ref=followup_ref
-            )
-        
-        logger.info(f"[API] Session management complete | session_id={request.session_id[:8]}...")
-
-        # Add current user message to session
+        # Now add the current user message to session
         session_mgr.add_message(request.session_id, "user", request.query)
+
+        logger.info(f"[API] is_followup={is_followup} | followup_ref={followup_ref}")
+        
+        # 1. Retrieve Data (pass anchor_scope for follow-ups)
+        retriever_start = time.perf_counter()
+        retriever = DataRetriever(user_id=request.user_id)
+        retrieved_data = retriever.retrieve_data(request.query, anchor_scope=anchor_scope)
+        retriever_duration = (time.perf_counter() - retriever_start) * 1000
+        
+        trade_count = len(retrieved_data.get("trades", []))
+        journal_count = len(retrieved_data.get("journals", []))
+        logger.info(f"[API] Data retrieved | trades={trade_count} | journals={journal_count} | duration={retriever_duration:.0f}ms")
+        
+        # 1.5 Store query context for future follow-ups (pass date_range from retriever)
+        date_range = retriever.date_context[:2] if retriever.date_context else None
+        session_mgr.add_query_context(
+            request.session_id,
+            request.query,
+            retrieved_data,
+            is_followup=is_followup,
+            followup_ref=anchor_scope,
+            date_range=date_range
+        )
 
         # Check if query is in-domain (reject out-of-domain queries)
         retriever = DataRetriever(user_id=request.user_id)  # Re-instantiate to access analysis
@@ -322,9 +370,11 @@ async def chat_endpoint(request: ChatRequest):
                     }
                 )
         
-        # Handle streaming vs non-streaming
+        # 3. Handle streaming vs non-streaming
         if request.stream:
             logger.info(f"[API] Starting SSE stream...")
+            # For follow-ups, use anchor IDs; otherwise no scope constraint
+            trade_scope_for_llm = anchor_scope.get("trade_ids", []) if (is_followup and anchor_scope) else None
             return StreamingResponse(
                 generate_stream_response(
                     request, 
@@ -333,8 +383,8 @@ async def chat_endpoint(request: ChatRequest):
                     start_time, 
                     request_id,
                     is_followup=is_followup,
-                    trade_scope=retrieved_data.get("trades", []) if not is_followup else 
-                               [t.get("trade_id") for t in retrieved_data.get("trades", [])]
+                    trade_scope=trade_scope_for_llm,
+                    anchor_scope=anchor_scope
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -355,7 +405,9 @@ async def chat_endpoint(request: ChatRequest):
             history_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in session["messages"]])
             history_text = f"Conversation History:\n{history_text}\n\n"
         
-        context_str = f"{history_text}Retrieved Data: {retrieved_data}"
+        # Build compact context summary
+        compact_context = _build_compact_context(retrieved_data, is_followup, anchor_scope)
+        context_str = f"{history_text}{compact_context}"
         
         # Extract date context from retriever for prompt enrichment
         date_period_context = None
@@ -365,6 +417,9 @@ async def chat_endpoint(request: ChatRequest):
         
         current_date = retriever.current_date.strftime("%B %d, %Y")
         
+        # For follow-ups, use anchor IDs; otherwise no scope constraint
+        trade_scope_for_llm = anchor_scope.get("trade_ids", []) if (is_followup and anchor_scope) else None
+        
         response_text = generator.generate_response(
             user_query=request.query,
             context=context_str,
@@ -372,7 +427,7 @@ async def chat_endpoint(request: ChatRequest):
             current_date=current_date,
             date_period_context=date_period_context,
             is_followup=is_followup,
-            trade_scope=[t.get("trade_id") for t in retrieved_data.get("trades", [])] if is_followup else None
+            trade_scope=trade_scope_for_llm
         )
         llm_duration = (time.perf_counter() - llm_start) * 1000
         
@@ -400,7 +455,7 @@ async def chat_endpoint(request: ChatRequest):
 
     except Exception as e:
         duration = (time.perf_counter() - start_time) * 1000
-        logger.error(f"[API] REQUEST FAILED | id={request_id} | duration={duration:.0f}ms | error={e}")
+        logger.exception(f"[API] REQUEST FAILED | id={request_id} | duration={duration:.0f}ms | error={e}")
         logger.info("[API] " + "="*60)
         raise HTTPException(status_code=500, detail=str(e))
 
