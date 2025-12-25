@@ -26,6 +26,43 @@ class TradeQueries:
         return QueryExecutor.execute_raw_sql(query, user_id, {"user_id": user_id, "limit": limit})
     
     @staticmethod
+    def get_trades_by_ids(user_id: int, trade_ids: List[int]) -> List[Dict]:
+        """Get trades by specific IDs (for follow-up scope anchoring)."""
+        if not trade_ids:
+            logger.debug(f"get_trades_by_ids called with empty trade_ids for user {user_id}")
+            return []
+        
+        # Deduplicate and sort IDs for consistent caching
+        unique_ids = sorted(set(trade_ids))
+        
+        # Batch large ID lists to avoid SQL limits (max 200 per batch)
+        batch_size = 200
+        all_trades = []
+        
+        for i in range(0, len(unique_ids), batch_size):
+            batch_ids = unique_ids[i:i + batch_size]
+            logger.debug(f"Fetching batch {i//batch_size + 1} of trades for user {user_id} | ids={len(batch_ids)}")
+            
+            # Use tuple parameter for IN clause
+            query = """
+                SELECT t.*, a.symbol, a.name as asset_name, s.name as strategy_name
+                FROM trades t
+                LEFT JOIN assets a ON t.asset_id = a.asset_id
+                LEFT JOIN strategies s ON t.strategy_id = s.strategy_id
+                WHERE t.user_id = :user_id AND t.trade_id = ANY(:trade_ids)
+                ORDER BY t.trade_date DESC
+            """
+            
+            batch_results = QueryExecutor.execute_raw_sql(
+                query, user_id, 
+                {"user_id": user_id, "trade_ids": batch_ids}
+            )
+            all_trades.extend(batch_results)
+        
+        logger.debug(f"Retrieved {len(all_trades)} trades by IDs for user {user_id} (requested {len(unique_ids)})")
+        return all_trades
+    
+    @staticmethod
     def get_trades_by_date_range(user_id: int, start: datetime, end: datetime) -> List[Dict]:
         """Get trades within a date range."""
         logger.debug(f"Fetching trades for user {user_id} between {start} and {end}")
