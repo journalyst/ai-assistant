@@ -1,32 +1,19 @@
-
 from __future__ import annotations
-from datetime import date, datetime
-from decimal import Decimal
 from typing import AsyncGenerator, Optional, TYPE_CHECKING
 import asyncio
 import json
 import time
+
 from src.logger import get_logger
 from src.cache.session import SessionManager
 from src.llm.response_generator import ResponseGenerator
+from src.utils.json_encoder import PostgreSQLEncoder
 
 if TYPE_CHECKING:
     from src.orchestration.retriever import DataRetriever
     from .schemas import ChatRequest
 
 logger = get_logger(__name__)
-
-
-class PostgreSQLEncoder(json.JSONEncoder):
-    """JSON encoder to handle Decimal, datetime, and date types from PostgreSQL."""
-    
-    def default(self, obj):
-        if isinstance(obj, Decimal):
-            return float(obj)
-        if isinstance(obj, (datetime, date)):
-            return obj.isoformat()
-        return super().default(obj)
-
 
 def mask_dsn(dsn: str) -> str:
     """Mask password in database connection string for safe logging."""
@@ -36,7 +23,6 @@ def mask_dsn(dsn: str) -> str:
         if len(pwd_and_host) == 2:
             return pre + ":***@" + pwd_and_host[1]
     return dsn
-
 
 def build_compact_context(
     retrieved_data: dict,
@@ -80,7 +66,6 @@ def build_compact_context(
     
     return "\n".join(context_parts)
 
-
 def build_history_text(session: Optional[dict]) -> str:
     """
     Build conversation history text from session.
@@ -93,7 +78,6 @@ def build_history_text(session: Optional[dict]) -> str:
         for m in session["messages"]
     ]
     return f"Conversation History:\n" + "\n".join(history_lines) + "\n\n"
-
 
 async def generate_stream_response(
     request: "ChatRequest",
@@ -193,7 +177,6 @@ async def generate_stream_response(
         error_event = {"error": str(e)}
         yield f"event: error\ndata: {json.dumps(error_event, cls=PostgreSQLEncoder)}\n\n"
 
-
 async def generate_out_of_domain_response(
     response_text: str,
     start_time: float,
@@ -242,7 +225,6 @@ async def generate_out_of_domain_response(
         logger.exception(f"[API] OUT-OF-DOMAIN STREAM FAILED | id={request_id} | duration={duration:.0f}ms | error={e}")
         error_event = {"error": str(e)}
         yield f"event: error\ndata: {json.dumps(error_event, cls=PostgreSQLEncoder)}\n\n"
-
 
 # Constants
 OUT_OF_DOMAIN_RESPONSE = (
