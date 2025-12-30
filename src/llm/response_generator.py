@@ -1,33 +1,12 @@
-from openai import OpenAI
+import time
+from typing import Generator, Optional
+
 from src.config import settings
 from src.logger import get_logger
+from src.utils.clients import get_openai_client, get_openrouter_client
 from .prompt_modifier import PromptModifier
-from typing import Generator, Optional
-import json
-import time
 
 logger = get_logger(__name__)
-
-# Initialize clients lazily based on provider
-openrouter_client = None
-openai_client = None
-
-def get_openrouter_client():
-    global openrouter_client
-    if openrouter_client is None:
-        openrouter_client = OpenAI(
-            api_key=settings.openrouter_api_key,
-            base_url="https://openrouter.ai/api/v1"
-        )
-    return openrouter_client
-
-def get_openai_client():
-    global openai_client
-    if openai_client is None:
-        openai_client = OpenAI(
-            api_key=settings.openai_api_key
-        )
-    return openai_client
 
 class ResponseGenerator:
     def __init__(self):

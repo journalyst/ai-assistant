@@ -1,7 +1,7 @@
+"""Predefined SQL query patterns for trade data retrieval."""
 from typing import List, Dict, Optional
 from datetime import datetime
-from sqlalchemy.orm import Session
-from .models import Trade, Assets, Strategy, Tag
+
 from .executor import QueryExecutor
 from src.logger import get_logger
 
