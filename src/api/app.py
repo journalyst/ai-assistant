@@ -1,78 +1,41 @@
 from __future__ import annotations
+from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
+import platform
+import time
+import uuid
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
-from .schemas import ChatRequest, ChatResponse
-from contextlib import asynccontextmanager
-from datetime import date, datetime
-from decimal import Decimal
-from pathlib import Path
-from typing import AsyncGenerator, Optional
-import platform
 import openai
-import asyncio
-import time
-import json
 from src.config import settings
 from src.embeddings import get_embedding_dimension
 from src.logger import get_logger
 from src.orchestration.retriever import DataRetriever
+from src.orchestration.router import QueryRouter
 from src.llm.response_generator import ResponseGenerator
 from src.cache.session import SessionManager
+from .schemas import ChatRequest, ChatResponse
+from .helpers import (
+    PostgreSQLEncoder,
+    mask_dsn,
+    build_compact_context,
+    build_history_text,
+    generate_stream_response,
+    generate_out_of_domain_response,
+    OUT_OF_DOMAIN_RESPONSE,
+)
 
 logger = get_logger(__name__)
-
-# JSON encoder to handle Decimal (and ensure safe serialization of trade data)
-class PostgreSQLEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, Decimal):
-            return float(obj)
-        if isinstance(obj, (datetime, date)):
-            return obj.isoformat()
-        return super().default(obj)
 
 # Path to test client
 TEST_CLIENT_DIR = Path(__file__).parent.parent.parent / "test_client"
 
-def _build_compact_context(retrieved_data: dict, is_followup: bool = False, anchor_scope: Optional[dict] = None) -> str:
-    """Build a compact context summary without raw data rows."""
-    trade_count = len(retrieved_data.get("trades", []))
-    journal_count = len(retrieved_data.get("journals", []))
-    
-    # Extract summary stats from trades
-    trades = retrieved_data.get("trades", [])
-    total_pnl = sum(t.get("pnl", 0) for t in trades) if trades else 0
-    symbols = list(set(t.get("symbol", "N/A") for t in trades)) if trades else []
-    
-    # Build context text
-    context_parts = []
-    
-    if is_followup and anchor_scope:
-        context_parts.append(f"FOLLOW-UP CONTEXT (analyzing previous query scope):")
-        context_parts.append(f"- Anchor trades: {len(anchor_scope.get('trade_ids', []))} IDs")
-        context_parts.append(f"- Anchor journals: {len(anchor_scope.get('journal_ids', []))} IDs")
-        if anchor_scope.get("date_range"):
-            dr = anchor_scope["date_range"]
-            context_parts.append(f"- Date range: {dr.get('start', 'N/A')} to {dr.get('end', 'N/A')}")
-    else:
-        context_parts.append(f"DATA SUMMARY:")
-    
-    if trade_count > 0:
-        context_parts.append(f"- Trades retrieved: {trade_count}")
-        context_parts.append(f"- Total P&L: ${total_pnl:.2f}")
-        context_parts.append(f"- Symbols: {', '.join(symbols[:10])}{'...' if len(symbols) > 10 else ''}")
-        context_parts.append(f"- Trade details: {json.dumps(trades, cls=PostgreSQLEncoder)}")  # Still include full data for LLM analysis
-    
-    if journal_count > 0:
-        journals = retrieved_data.get("journals", [])
-        context_parts.append(f"- Journal entries retrieved: {journal_count}")
-        context_parts.append(f"- Journal details: {json.dumps(journals, cls=PostgreSQLEncoder)}")  # Include full journals for LLM
-    
-    return "\n".join(context_parts)
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Application lifespan handler for startup/shutdown."""
     logger.info("Starting Journalyst AI Assistant API...")
     logger.info(f"Test client available at: http://localhost:8000/")
     yield
@@ -93,162 +56,12 @@ app.add_middleware(
 if TEST_CLIENT_DIR.exists():
     app.mount("/static", StaticFiles(directory=TEST_CLIENT_DIR), name="static")
 
-
-async def generate_stream_response(
-    request: ChatRequest,
-    retriever: DataRetriever,
-    retrieved_data: dict,
-    start_time: float,
-    request_id: str = "unknown",
-    is_followup: bool = False,
-    trade_scope: Optional[list] = None,
-    anchor_scope: Optional[dict] = None
-) -> AsyncGenerator[str, None]:
-    """
-    Async generator for Server-Sent Events (SSE) streaming.
-    Yields SSE-formatted events with text chunks.
-    """
-    try:
-        # Send start event with metadata
-        start_event = {
-            "event": "start",
-            "data": {
-                "request_id": request_id,
-                "query_type": retriever.query_analysis.get("query_type") if retriever.query_analysis else "unknown"
-            }
-        }
-        yield f"event: start\ndata: {json.dumps(start_event['data'], cls=PostgreSQLEncoder)}\n\n"
-        
-        # Send retrieved data
-        data_event = {"trade_data": retrieved_data.get("trade_data", []), "journal_data": retrieved_data.get("journal_data", [])}
-        yield f"event: data\ndata: {json.dumps(data_event, cls=PostgreSQLEncoder)}\n\n"
-        
-        # Stream LLM response
-        llm_start = time.perf_counter()
-        generator = ResponseGenerator()
-        
-        # Build context with session history
-        session_mgr = SessionManager()
-        session = session_mgr.get_session(request.session_id) if request.session_id else None
-        history_text = ""
-        if session and session.get("messages"):
-            history_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in session["messages"]])
-            history_text = f"Conversation History:\n{history_text}\n\n"
-        
-        # Build compact context summary
-        compact_context = _build_compact_context(retrieved_data, is_followup, anchor_scope)
-        context_str = f"{history_text}{compact_context}"
-        
-        # Extract date context from retriever for prompt enrichment
-        date_period_context = None
-        if retriever.date_context:
-            _, _, date_context_str = retriever.date_context
-            date_period_context = date_context_str
-        
-        current_date = retriever.current_date.strftime("%B %d, %Y")
-        
-        full_response = ""
-        chunk_count = 0
-        for chunk in generator.generate_response_stream(
-            user_query=request.query,
-            context=context_str,
-            user_name=request.user_name,
-            current_date=current_date,
-            date_period_context=date_period_context,
-            is_followup=is_followup,
-            trade_scope=trade_scope
-        ):
-            full_response += chunk
-            chunk_count += 1
-            # Send each text chunk
-            yield f"event: chunk\ndata: {json.dumps({'text': chunk}, cls=PostgreSQLEncoder)}\n\n"
-            # Small delay to prevent overwhelming the client
-            await asyncio.sleep(0.01)
-        
-        # Save assistant response to session
-        if request.session_id:
-            session_mgr.add_message(request.session_id, "assistant", full_response)
-        
-        llm_duration = (time.perf_counter() - llm_start) * 1000
-        
-        # Send done event with final metadata
-        total_duration = (time.perf_counter() - start_time) * 1000
-        done_event = {
-            "request_id": request_id,
-            "duration_ms": total_duration,
-            "llm_ms": llm_duration,
-            "response_length": len(full_response),
-            "chunks": chunk_count,
-            "query_type": retriever.query_analysis.get("query_type") if retriever.query_analysis else "unknown"
-        }
-        yield f"event: done\ndata: {json.dumps(done_event, cls=PostgreSQLEncoder)}\n\n"
-        
-        logger.info(f"[API] STREAM COMPLETE | id={request_id} | llm={llm_duration:.0f}ms | total={total_duration:.0f}ms | chunks={chunk_count}")
-        logger.info("[API] " + "="*60)
-        
-    except Exception as e:
-        duration = (time.perf_counter() - start_time) * 1000
-        logger.exception(f"[API] STREAM FAILED | id={request_id} | duration={duration:.0f}ms | error={e}")
-        logger.info("[API] " + "="*60)
-        error_event = {"error": str(e)}
-        yield f"event: error\ndata: {json.dumps(error_event, cls=PostgreSQLEncoder)}\n\n"
-
-
-async def _generate_out_of_domain_response(
-    response_text: str,
-    start_time: float,
-    request_id: str = "unknown"
-) -> AsyncGenerator[str, None]:
-    """
-    Async generator for out-of-domain query rejection (SSE streaming).
-    Yields a polite rejection message.
-    """
-    try:
-        # Send start event
-        start_event = {
-            "event": "start",
-            "data": {
-                "request_id": request_id,
-                "query_type": "out_of_domain",
-                "status": "rejected"
-            }
-        }
-        yield f"event: start\ndata: {json.dumps(start_event['data'], cls=PostgreSQLEncoder)}\n\n"
-        
-        # Send data event (empty for out-of-domain)
-        data_event = {"trade_data": [], "journal_data": []}
-        yield f"event: data\ndata: {json.dumps(data_event, cls=PostgreSQLEncoder)}\n\n"
-        
-        # Send response as single chunk
-        yield f"event: chunk\ndata: {json.dumps({'text': response_text}, cls=PostgreSQLEncoder)}\n\n"
-        
-        # Send done event
-        total_duration = (time.perf_counter() - start_time) * 1000
-        done_event = {
-            "request_id": request_id,
-            "duration_ms": total_duration,
-            "response_length": len(response_text),
-            "chunks": 1,
-            "query_type": "out_of_domain",
-            "status": "rejected"
-        }
-        yield f"event: done\ndata: {json.dumps(done_event, cls=PostgreSQLEncoder)}\n\n"
-        
-        logger.info(f"[API] OUT-OF-DOMAIN STREAM COMPLETE | id={request_id} | total={total_duration:.0f}ms")
-        
-    except Exception as e:
-        duration = (time.perf_counter() - start_time) * 1000
-        logger.exception(f"[API] OUT-OF-DOMAIN STREAM FAILED | id={request_id} | duration={duration:.0f}ms | error={e}")
-        error_event = {"error": str(e)}
-        yield f"event: error\ndata: {json.dumps(error_event, cls=PostgreSQLEncoder)}\n\n"
-
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
     """
     Chat endpoint supporting both streaming and non-streaming responses.
     Set request.stream=true for SSE streaming.
     """
-    import uuid
     request_id = str(uuid.uuid4())[:8]
     start_time = time.perf_counter()
     query_preview = request.query[:60] + "..." if len(request.query) > 60 else request.query
@@ -292,7 +105,6 @@ async def chat_endpoint(request: ChatRequest):
                     break
             
             if previous_query:
-                from src.orchestration.router import QueryRouter
                 router = QueryRouter()
                 followup_detection = router.detect_followup(request.query, previous_query)
                 is_followup = followup_detection.get("is_followup", False)
@@ -345,12 +157,11 @@ async def chat_endpoint(request: ChatRequest):
         logger.info(f"[API] Checking if query is in-domain...")
         is_in_domain = (retriever.query_analysis or {}).get("is_in_domain", True)
         if not is_in_domain:
-            out_of_domain_response = "I'm specifically designed to help with trading analysis and performance insights. Your question is outside my area of expertise. Please ask me about your trades, strategies, performance metrics, or trading psychology."
             logger.info(f"[API] OUT-OF-DOMAIN query rejected | query_type={(retriever.query_analysis or {}).get('query_type', 'unknown')}")
             
             if request.stream:
                 return StreamingResponse(
-                    _generate_out_of_domain_response(out_of_domain_response, start_time, request_id),
+                    generate_out_of_domain_response(OUT_OF_DOMAIN_RESPONSE, start_time, request_id),
                     media_type="text/event-stream",
                     headers={
                         "Cache-Control": "no-cache",
@@ -360,7 +171,7 @@ async def chat_endpoint(request: ChatRequest):
                 )
             else:
                 return ChatResponse(
-                    response=out_of_domain_response,
+                    response=OUT_OF_DOMAIN_RESPONSE,
                     data={},
                     metadata={
                         "request_id": request_id,
@@ -400,13 +211,10 @@ async def chat_endpoint(request: ChatRequest):
         
         # Build context with session history
         session = session_mgr.get_session(request.session_id) if request.session_id else None
-        history_text = ""
-        if session and session.get("messages"):
-            history_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in session["messages"]])
-            history_text = f"Conversation History:\n{history_text}\n\n"
+        history_text = build_history_text(session)
         
         # Build compact context summary
-        compact_context = _build_compact_context(retrieved_data, is_followup, anchor_scope)
+        compact_context = build_compact_context(retrieved_data, is_followup, anchor_scope)
         context_str = f"{history_text}{compact_context}"
         
         # Extract date context from retriever for prompt enrichment
@@ -482,18 +290,6 @@ async def health():
         }
     }
 
-
-def mask_dsn(dsn: str) -> str:
-    # Simple masking: hide password between ':' and '@'
-    if ":" in dsn and "@" in dsn:
-        pre, rest = dsn.split(":", 1)
-        pwd_and_host = rest.split("@", 1)
-        if len(pwd_and_host) == 2:
-            return pre + ":***@" + pwd_and_host[1]
-    return dsn
-
-
-# Serve test client UI
 @app.get("/")
 async def serve_test_client():
     """Serve the test client HTML page."""
