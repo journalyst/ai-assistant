@@ -1,20 +1,13 @@
+import time
 import redis
 import json
-from decimal import Decimal
-from datetime import datetime, date
-from src.config import settings
-from src.logger import get_logger
+from datetime import datetime
 from typing import List, Optional
 from tiktoken import get_encoding
 
-# Custom JSON encoder to handle PostgreSQL types (Decimal, datetime, date)
-class PostgreSQLEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, Decimal):
-            return float(obj)
-        if isinstance(obj, (datetime, date)):
-            return obj.isoformat()
-        return super().default(obj)
+from src.config import settings
+from src.logger import get_logger
+from src.utils.json_encoder import PostgreSQLEncoder
 
 logger = get_logger(__name__)
 redis_client = redis.from_url(settings.redis_url)
@@ -67,7 +60,6 @@ class SessionManager:
 
     @staticmethod
     def get_session(session_id: str) -> Optional[dict]:
-        import time
         start = time.perf_counter()
         session_raw = redis_client.get(f"session:{session_id}")
         duration = (time.perf_counter() - start) * 1000
@@ -88,7 +80,6 @@ class SessionManager:
         return parsed
     
     def add_message(self, session_id: str, role: str, content: str):
-        import time
         start = time.perf_counter()
         key = f"session:{session_id}"
         session_raw = redis_client.get(key)
@@ -131,7 +122,6 @@ class SessionManager:
     
     def add_query_context(self, session_id: str, user_message: str, retrieved_data: dict, is_followup: bool = False, followup_ref: Optional[dict] = None, date_range: Optional[tuple] = None):
         """Store only identifiers and minimal metadata for a query to support follow-ups."""
-        import time
         start = time.perf_counter()
         key = f"session:{session_id}"
         session_raw = redis_client.get(key)
