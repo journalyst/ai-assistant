@@ -10,8 +10,7 @@ Usage:
 
 import json
 from pathlib import Path
-from src.vector_db.qdrant_client import QdrantConnector
-from src.vector_db.journal_store import JournalStore
+from src.vector_db.vector_store import JournalStore
 from src.logger import get_logger
 
 logger = get_logger(__name__)
@@ -31,7 +30,6 @@ def seed_journals():
         return False
     
     # Initialize connections
-    connector = QdrantConnector()
     journal_store = JournalStore()
     
     logger.info("Starting journal seeding process...")
