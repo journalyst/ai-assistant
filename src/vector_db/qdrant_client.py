@@ -8,13 +8,13 @@ logger = get_logger(__name__)
 _client = None
 
 class QdrantConnector:
-    def __init__(self):
+    def __init__(self, collection_name: str):
         global _client
         if _client is None:
             logger.info(f"Connecting to Qdrant at {settings.qdrant_url}")
             try:
                 _client = QdrantClient(url=settings.qdrant_url)
-                self._ensure_collection(_client)
+                self._ensure_collection(_client, collection_name)
             except Exception as e:
                 logger.error(f"Failed to connect to Qdrant: {e}")
                 raise
@@ -23,8 +23,7 @@ class QdrantConnector:
     def get_qdrant_client(self) -> QdrantClient:
         return self.client
 
-    def _ensure_collection(self, client: QdrantClient):
-        collection_name = "journal_entries"
+    def _ensure_collection(self, client: QdrantClient, collection_name: str):
         if client is None:
             client = self.client
         
