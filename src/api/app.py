@@ -153,7 +153,6 @@ async def chat_endpoint(request: ChatRequest):
         )
 
         # Check if query is in-domain (reject out-of-domain queries)
-        retriever = DataRetriever(user_id=request.user_id)  # Re-instantiate to access analysis
         logger.info(f"[API] Checking if query is in-domain...")
         is_in_domain = (retriever.query_analysis or {}).get("is_in_domain", True)
         if not is_in_domain:
