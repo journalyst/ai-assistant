@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from typing import Optional, Any
 
 class ChatRequest(BaseModel):
-    user_id: int
+    user_id: str
     query: str
     user_name: str = "Trader"
     stream: bool = False  # Enable streaming response

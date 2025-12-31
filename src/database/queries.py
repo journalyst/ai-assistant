@@ -11,7 +11,7 @@ class TradeQueries:
     """Common trade-related query patterns."""
     
     @staticmethod
-    def get_trades_by_user(user_id: int, limit: int = 100) -> List[Dict]:
+    def get_trades_by_user(user_id: str, limit: int = 100) -> List[Dict]:
         """Get recent trades for a user."""
         logger.debug(f"Fetching recent trades for user {user_id} (limit={limit})")
         query = """
@@ -26,7 +26,7 @@ class TradeQueries:
         return QueryExecutor.execute_raw_sql(query, user_id, {"user_id": user_id, "limit": limit})
     
     @staticmethod
-    def get_trades_by_ids(user_id: int, trade_ids: List[int]) -> List[Dict]:
+    def get_trades_by_ids(user_id: str, trade_ids: List[int]) -> List[Dict]:
         """Get trades by specific IDs (for follow-up scope anchoring)."""
         if not trade_ids:
             logger.debug(f"get_trades_by_ids called with empty trade_ids for user {user_id}")
@@ -63,7 +63,7 @@ class TradeQueries:
         return all_trades
     
     @staticmethod
-    def get_trades_by_date_range(user_id: int, start: datetime, end: datetime) -> List[Dict]:
+    def get_trades_by_date_range(user_id: str, start: datetime, end: datetime) -> List[Dict]:
         """Get trades within a date range."""
         logger.debug(f"Fetching trades for user {user_id} between {start} and {end}")
         query = """
@@ -82,7 +82,7 @@ class TradeQueries:
         )
     
     @staticmethod
-    def get_performance_summary(user_id: int) -> Dict:
+    def get_performance_summary(user_id: str) -> Dict:
         """Calculate aggregate performance metrics."""
         logger.debug(f"Calculating performance summary for user {user_id}")
         query = """
@@ -104,7 +104,7 @@ class TradeQueries:
         return result[0] if result else {}
     
     @staticmethod
-    def get_trades_by_strategy(user_id: int, strategy_name: str) -> List[Dict]:
+    def get_trades_by_strategy(user_id: str, strategy_name: str) -> List[Dict]:
         """Get trades filtered by strategy."""
         logger.debug(f"Fetching trades for user {user_id} with strategy {strategy_name}")
         query = """
@@ -122,7 +122,7 @@ class TradeQueries:
         )
     
     @staticmethod
-    def get_trades_by_asset(user_id: int, symbol: str) -> List[Dict]:
+    def get_trades_by_asset(user_id: str, symbol: str) -> List[Dict]:
         """Get trades for a specific asset."""
         logger.debug(f"Fetching trades for user {user_id} on {symbol}")
         query = """
@@ -140,7 +140,7 @@ class TradeQueries:
         )
     
     @staticmethod
-    def get_trades_by_session(user_id: int, session: str) -> List[Dict]:
+    def get_trades_by_session(user_id: str, session: str) -> List[Dict]:
         """Get trades filtered by trading session."""
         logger.debug(f"Fetching trades for user {user_id} in {session} session")
         query = """
@@ -158,7 +158,7 @@ class TradeQueries:
         )
     
     @staticmethod
-    def get_win_rate_by_strategy(user_id: int) -> List[Dict]:
+    def get_win_rate_by_strategy(user_id: str) -> List[Dict]:
         """Calculate win rate grouped by strategy."""
         logger.debug(f"Calculating win rate by strategy for user {user_id}")
         query = """
@@ -177,7 +177,7 @@ class TradeQueries:
         return QueryExecutor.execute_raw_sql(query, user_id, {"user_id": user_id})
     
     @staticmethod
-    def get_emotional_patterns(user_id: int) -> List[Dict]:
+    def get_emotional_patterns(user_id: str) -> List[Dict]:
         """Analyze trading outcomes by emotional state."""
         logger.debug(f"Analyzing emotional patterns for user {user_id}")
         query = """

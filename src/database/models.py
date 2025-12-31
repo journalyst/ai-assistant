@@ -15,7 +15,7 @@ trade_tags = Table(
 class User(Base):
     __tablename__ = 'users'
     
-    user_id = Column(Integer, primary_key=True)
+    user_id = Column(String(100), primary_key=True)
     username = Column(String(100), unique=True, nullable=False)
     email = Column(String(255), unique=True, nullable=False)
     created_at = Column(DateTime, nullable=False)
@@ -35,7 +35,7 @@ class Strategy(Base):
     __tablename__ = 'strategies'
 
     strategy_id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.user_id'), nullable=False)
+    user_id = Column(String(100), ForeignKey('users.user_id'), nullable=False)
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False)
@@ -45,7 +45,7 @@ class Tag(Base):
     __tablename__ = 'tags'
 
     tag_id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.user_id'), nullable=False)
+    user_id = Column(String(100), ForeignKey('users.user_id'), nullable=False)
     name = Column(String(50), nullable=False)
     color = Column(String(7), nullable=True)  # hex color code
     created_at = Column(DateTime, nullable=False)
@@ -55,7 +55,7 @@ class Trade(Base):
     __tablename__ = 'trades'
 
     trade_id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.user_id'), nullable=False)
+    user_id = Column(String(100), ForeignKey('users.user_id'), nullable=False)
     asset_id = Column(Integer, ForeignKey('assets.asset_id'), nullable=False)
     strategy_id = Column(Integer, ForeignKey('strategies.strategy_id'), nullable=False)
     

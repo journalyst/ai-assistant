@@ -17,7 +17,7 @@ class DataRetriever:
     # Change this back to datetime.now() before pushing to production.
     TEST_SEED_CURRENT_DATE = datetime(2024, 2, 15)
 
-    def __init__(self, user_id: int, current_date: Optional[datetime] = None):
+    def __init__(self, user_id: str, current_date: Optional[datetime] = None):
         self.user_id = user_id
         # self.current_date = current_date or datetime.now()
         self.current_date = current_date or DataRetriever.TEST_SEED_CURRENT_DATE

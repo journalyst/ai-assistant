@@ -10,7 +10,7 @@ class QueryExecutor:
     """Executes validated SELECT queries against read-only DB."""
     
     @staticmethod
-    def execute_raw_sql(query: str, user_id: int, params: Dict[str, Any]) -> List[Dict]:
+    def execute_raw_sql(query: str, user_id: str, params: Dict[str, Any]) -> List[Dict]:
         """
         Execute a raw SQL query with safety validation.
         
@@ -53,7 +53,7 @@ class QueryExecutor:
             raise
     
     @staticmethod
-    def execute_orm_query(query_func, user_id: int) -> List:
+    def execute_orm_query(query_func, user_id: str) -> List:
         """
         Execute an ORM query (for type safety with models).
         
