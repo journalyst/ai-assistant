@@ -66,12 +66,36 @@ def build_compact_context(
     
     return "\n".join(context_parts)
 
-def build_history_text(session: Optional[dict]) -> str:
+def build_history_text(session: Optional[dict], user_id: Optional[str], query_text: Optional[str]) -> str:
     """
     Build conversation history text from session.
     """
     if not session or not session.get("messages"):
         return ""
+    
+    recent_text = ""
+    if session and session.get("messages"):
+        recent_messages = session["messages"][-10:]
+        for msg in recent_messages:
+            recent_text += f"{msg['role'].upper()}: {msg['content']}\n"
+
+    relevant_text = ""
+    try:
+        from src.vector_db.vector_store import AssistantConversationStore
+        relevant_entries = AssistantConversationStore.search_conversations(
+            user_id=str(user_id),
+            query_text=str(query_text)
+        )
+        if relevant_entries:
+            relevant_text += "Relevant Past Conversations:\n"
+            for entry in relevant_entries:
+                for msg in entry.get("messages", []):
+                    relevant_text += f"{msg['role'].upper()}: {msg['content']}\n"
+            relevant_text += "\n"
+    except ImportError:
+        logger.warning("AssistantConversationStore not available for retrieving relevant conversations.")
+    except Exception as e:
+        logger.error(f"Error retrieving relevant conversations: {e}")
     
     history_lines = [
         f"{m['role'].upper()}: {m['content']}" 
@@ -119,7 +143,7 @@ async def generate_stream_response(
         # Build context with session history
         session_mgr = SessionManager()
         session = session_mgr.get_session(request.session_id) if request.session_id else None
-        history_text = build_history_text(session)
+        history_text = build_history_text(session, request.user_id, request.query)
         
         # Build compact context summary
         compact_context = build_compact_context(retrieved_data, is_followup, anchor_scope)
@@ -153,6 +177,19 @@ async def generate_stream_response(
         if request.session_id:
             session_mgr.add_message(request.session_id, "assistant", full_response)
         
+        if full_response:
+            from src.vector_db.vector_store import AssistantConversationStore
+            # Store conversation to vector DB
+            try:
+                messages_to_store = (session["messages"] if session else []) + [{"role": "assistant", "content": full_response}]
+                AssistantConversationStore.upsert_conversation(
+                    user_id=request.user_id,
+                    session_id=request.session_id,
+                    messages=messages_to_store
+                )
+            except Exception as e:
+                logger.error(f"[API] Failed to upsert conversation to vector DB | error={e}")
+                
         llm_duration = (time.perf_counter() - llm_start) * 1000
         
         # Send done event with final metadata

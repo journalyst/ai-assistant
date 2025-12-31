@@ -210,7 +210,7 @@ async def chat_endpoint(request: ChatRequest):
         
         # Build context with session history
         session = session_mgr.get_session(request.session_id) if request.session_id else None
-        history_text = build_history_text(session)
+        history_text = build_history_text(session, request.user_id, request.query)
         
         # Build compact context summary
         compact_context = build_compact_context(retrieved_data, is_followup, anchor_scope)
