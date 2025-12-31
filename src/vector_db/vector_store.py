@@ -1,6 +1,6 @@
 import time
 import uuid
-from typing import List
+from typing import List, Optional
 
 from qdrant_client.models import PointStruct, Filter, FieldCondition, MatchValue
 
@@ -15,7 +15,7 @@ class JournalStore:
     connector = QdrantConnector(collection_name=COLLECTION_NAME)
 
     @classmethod
-    def upsert_journal(cls, user_id: int, text: str, tags: List[str], created_at: str):
+    def upsert_journal(cls, user_id: str, text: str, tags: List[str], created_at: str):
         """Upsert a journal entry into Qdrant."""
         try:
             client = cls.connector.get_qdrant_client()
@@ -41,7 +41,7 @@ class JournalStore:
             raise
 
     @classmethod
-    def search_journals(cls, user_id: int, query_text: str, limit: int = 5) -> List[dict]:
+    def search_journals(cls, user_id: str, query_text: str, limit: int = 5) -> List[dict]:
         """Search for relevant journal entries for a user based on query text."""
         total_start = time.perf_counter()
         query_preview = query_text[:50] + "..." if len(query_text) > 50 else query_text
@@ -100,7 +100,7 @@ class JournalStore:
             raise
     
     @classmethod
-    def get_journals_by_ids(cls, user_id: int, journal_ids: List[str], include_text: bool = False) -> List[dict]:
+    def get_journals_by_ids(cls, user_id: str, journal_ids: List[str], include_text: bool = False) -> List[dict]:
         """Retrieve specific journal entries by IDs (for follow-up scope anchoring)."""
         import time
         if not journal_ids:
@@ -152,15 +152,17 @@ class AssistantConversationStore:
     connector = QdrantConnector(collection_name=COLLECTION_NAME)
     
     @classmethod
-    def upsert_conversation(cls, user_id: int, conversation_id: str, messages: List[dict]):
+    def upsert_conversation(cls, user_id: str, session_id: Optional[str], messages: List[dict]):
         """Upsert conversation history into Qdrant."""
         try:
             client = cls.connector.get_qdrant_client()
             # Flatten messages into a single text blob for embedding
             conversation_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages])
             embedding = get_embedding_from_cache(conversation_text)
+            # Generate UUID if session_id is None
+            point_id = session_id if session_id is not None else str(uuid.uuid4())
             point = PointStruct(
-                id=conversation_id,
+                id=point_id,
                 vector=embedding,
                 payload={
                     "user_id": user_id,
@@ -171,13 +173,13 @@ class AssistantConversationStore:
                 collection_name=cls.COLLECTION_NAME,
                 points=[point]
             )
-            logger.debug(f"Upserted conversation {conversation_id} for user {user_id}")
+            logger.debug(f"[VECTOR_UPSERT] Upserted conversation for user {user_id} for session {session_id}")
         except Exception as e:
-            logger.error(f"Failed to upsert conversation {conversation_id} for user {user_id}: {e}")
+            logger.error(f"[VECTOR_UPSERT] Failed to upsert conversation for user {user_id} for session {session_id}: {e}")
             raise
     
     @classmethod
-    def search_conversations(cls, user_id: int, query_text: str, limit: int = 3) -> List[dict]:
+    def search_conversations(cls, user_id: str, query_text: str, limit: int = 3) -> List[dict]:
         """Search for relevant past conversations based on query text."""
         try:
             client = cls.connector.get_qdrant_client()
@@ -196,6 +198,7 @@ class AssistantConversationStore:
                 limit=limit,
                 query_filter=filter_condition
             ).points
+            logger.info(f"[VECTOR_RETRIEVE] Retrieved {len(search_result)} conversations for user {user_id}")
             return [
                 {
                     "id": point.id,
@@ -204,5 +207,5 @@ class AssistantConversationStore:
                 for point in search_result
             ]
         except Exception as e:
-            logger.error(f"Failed to search conversations for user {user_id}: {e}")
+            logger.error(f"[VECTOR_RETRIEVE] Failed to search conversations for user {user_id}: {e}")
             raise
