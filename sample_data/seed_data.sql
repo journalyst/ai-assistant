@@ -244,7 +244,7 @@ INSERT INTO trades (trade_id, user_id, asset_id, strategy_id, direction, entry_t
 (72, 'user_2', 6, 4, 'sell', 'manual', 'new_york', '30m', 1.0, 2.2, 'profit', 220.00, 2.20, 2.00, 0, 'Tuesday', 'focused;determined', 'clear range break', 'simple setups best setups', 'goodwin', '2024-02-06', '15:15', '2024-02-06 15:15:00'),
 (73, 'user_2', 7, 5, 'buy', 'limit', 'asia', '15m', 1.0, 2.0, 'loss', -100.00, -1.00, 2.00, 1, 'Wednesday', 'nervous;hesitant', 'reversal before RBA', 'central bank risk is real', 'badloss', '2024-02-07', '03:00', '2024-02-07 03:00:00'),
 (74, 'user_2', 8, 6, 'buy', 'manual', 'asia', '1h', 0.9, 2.5, 'profit', 225.00, 2.25, 2.00, 0, 'Thursday', 'calm;confident', 'AUD strength emerging', 'follow intermarket signals', 'goodwin', '2024-02-08', '05:45', '2024-02-08 05:45:00'),
-(75, 'user_2', 1, 4, 'sell', 'limit', 'london', '30m', 1.0, 2.0, 'profit', 200.00, 2.00, 3.00, 0, 'Friday', 'steady;pleased', 'breakdown from consolidation', 'end of week setups can work', 'goodwin', '2024-02-09', '11:00', '2024-02-09 11:00:00');
+(75, 'user_2', 1, 4, 'sell', 'limit', 'london', '30m', 1.0, 2.0, 'profit', 200.00, 2.00, 3.00, 0, 'Friday', 'steady;pleased', 'breakdown from consolidation', 'end of week setups can work', 'goodwin', '2024-02-09', '11:00', '2024-02-09 11:00:00'),
 -- ============================================
 -- TRADES TABLE - User 3 (15 trades - scalping/swing focus)
 -- ============================================
