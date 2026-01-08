@@ -23,7 +23,9 @@ class ResponseGenerator:
         Generates a response using the configured LLM provider (non-streaming).
         """
         start_time = time.perf_counter()
-        query_preview = user_query[:50] + "..." if len(user_query) > 50 else user_query
+        from src.api.helpers import InputSanitizer
+        sanitized_user_query = InputSanitizer.sanitize_user_input(user_query)
+        query_preview = sanitized_user_query[:50] + "..." if len(sanitized_user_query) > 50 else sanitized_user_query
         context_size = len(context)
         
         logger.info(f"[LLM] Starting response generation | provider={self.provider} | model={self.model} | is_followup={is_followup} | query='{query_preview}'")
@@ -56,7 +58,7 @@ Previous context: {len(trade_scope)} trades in scope
                     model=self.model,
                     messages=[
                         {"role": "system", "content": formatted_system_prompt},
-                        {"role": "user", "content": f"{followup_constraint}Context:\n{context}\n\nUser Query:\n{user_query}"}
+                        {"role": "user", "content": f"{followup_constraint}Context:\n{context}\n\nUser Query:\n{sanitized_user_query}"}
                     ],
                     temperature=0.7,
                 )
@@ -72,7 +74,7 @@ Previous context: {len(trade_scope)} trades in scope
                     model=self.model,
                     input=[
                         {"role": "system", "content": formatted_system_prompt},
-                        {"role": "user", "content": f"Context:\n{context}\n\nUser Query:\n{user_query}"}
+                        {"role": "user", "content": f"Context:\n{context}\n\nUser Query:\n{sanitized_user_query}"}
                     ],
                     temperature=0.7
                 )

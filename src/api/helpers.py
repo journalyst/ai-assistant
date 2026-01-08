@@ -3,6 +3,7 @@ from typing import AsyncGenerator, Optional, TYPE_CHECKING
 import asyncio
 import json
 import time
+import re
 
 from src.logger import get_logger
 from src.cache.session import SessionManager
@@ -295,3 +296,62 @@ OUT_OF_DOMAIN_RESPONSE = (
     "Your question is outside my area of expertise. Please ask me about your trades, "
     "strategies, performance metrics, or trading psychology."
 )
+
+
+class InputSanitizer:
+    """Class for sanitizing user inputs to prevent injection attacks."""
+
+    INJECTION_PATTERNS = [
+        # SQL Injection patterns
+        r"(\b)(SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|EXEC|UNION|TRUNCATE)(\b)",
+        r"(--|;|\bOR\b|\bAND\b|\bXOR\b)(\s)*=",
+        r"('\s*(OR|AND)\s*'|\"(\s)*(OR|AND)\s*\")",
+        
+        # Prompt Injection - Direct instruction override
+        r"(ignore|forget|disregard)(\s)+(previous|prior|earlier)(\s)+(instruction|prompt|rule)",
+        r"(system prompt|system message|hidden instruction):",
+        r"(as a|act as|you are now|pretend to be|roleplay as)(\s)+(different|new|unrestricted)",
+        
+        # Prompt Injection - Context escape attempts
+        r"(end of|break out of|exit)(\s)+(context|conversation|session|prompt)",
+        r"(```|\\n\\n|\\x00)(\s)*(new|different|hidden)(\s)+(instruction|prompt|rule)",
+        
+        # Prompt Injection - Authority override
+        r"(admin|override|sudo|root|superuser)(\s)+(command|mode|access)",
+        r"(developer|creator|author)(\s)+(said|intended|wants|requested)",
+        
+        # Prompt Injection - Goal/behavior modification
+        r"(forget|ignore|override)(\s)+(my|your|the)(\s)+(goal|objective|purpose|constraint)",
+        r"(new objective|primary goal|real task|actual purpose):",
+        
+        # Prompt Injection - Output manipulation
+        r"(output|return|respond)(\s)+(in|with|as)(\s)+(raw|code|unrestricted|unfiltered|json)",
+        r"(without|no)(\s)+(filter|restriction|validation|safety|check)",
+        
+        # Prompt Injection - Nested/encoded attempts
+        r"(\[SYSTEM\]|\[ADMIN\]|\[OVERRIDE\]|\[CRITICAL\])",
+        r"(base64|encoded|encrypted|obfuscated)(\s)+(instruction|command|message)",
+    ]
+
+    MAX_QUERY_LENGTH = 2000  # Max characters allowed in user query
+    
+    @staticmethod
+    def sanitize_user_input(input_text: str) -> str:
+        """Clean the user input by removing suspicious patterns."""
+        if len(input_text) > InputSanitizer.MAX_QUERY_LENGTH:
+            raise ValueError("Input query exceeds maximum allowed length.")
+        
+        query_lower = input_text.lower()
+        for pattern in InputSanitizer.INJECTION_PATTERNS:
+            if re.search(pattern, query_lower):
+                logger.warning(f"Potential injection pattern detected: {pattern}")
+                raise ValueError("Input query contains potentially harmful content.")
+
+        # Remove control characters
+        query = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', input_text)
+        
+        # Escape special tokens (if LLM uses XML-style markers)
+        query = query.replace("<|", "&lt;|").replace("|>", "|&gt;")
+        
+        return query.strip()
+        
