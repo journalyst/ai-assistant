@@ -14,11 +14,13 @@ class QdrantConnector:
             logger.info(f"Connecting to Qdrant at {settings.qdrant_url}")
             try:
                 _client = QdrantClient(url=settings.qdrant_url)
-                self._ensure_collection(_client, collection_name)
             except Exception as e:
                 logger.error(f"Failed to connect to Qdrant: {e}")
                 raise
         self.client = _client
+
+        # Ensure the requested collection exists even when the client was created earlier
+        self._ensure_collection(self.client, collection_name)
 
     def get_qdrant_client(self) -> QdrantClient:
         return self.client
