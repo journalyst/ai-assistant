@@ -68,40 +68,61 @@ def build_compact_context(
 
 def build_history_text(session: Optional[dict], user_id: Optional[str], query_text: Optional[str]) -> str:
     """
-    Build conversation history text from session.
+    Build conversation history text from session using hybrid approach:
+    1. Rolling summary of older conversations (compressed context)
+    2. Recent messages (last 8-10 in full)
+    3. Semantically relevant past conversations from vector DB
     """
-    if not session or not session.get("messages"):
+    if not session:
         return ""
     
-    recent_text = ""
-    if session and session.get("messages"):
-        recent_messages = session["messages"][-10:]
-        for msg in recent_messages:
-            recent_text += f"{msg['role'].upper()}: {msg['content']}\n"
-
-    relevant_text = ""
-    try:
-        from src.vector_db.vector_store import AssistantConversationStore
-        relevant_entries = AssistantConversationStore.search_conversations(
-            user_id=str(user_id),
-            query_text=str(query_text)
-        )
-        if relevant_entries:
-            relevant_text += "Relevant Past Conversations:\n"
-            for entry in relevant_entries:
-                for msg in entry.get("messages", []):
-                    relevant_text += f"{msg['role'].upper()}: {msg['content']}\n"
-            relevant_text += "\n"
-    except ImportError:
-        logger.warning("AssistantConversationStore not available for retrieving relevant conversations.")
-    except Exception as e:
-        logger.error(f"Error retrieving relevant conversations: {e}")
+    context_parts = []
     
-    history_lines = [
-        f"{m['role'].upper()}: {m['content']}" 
-        for m in session["messages"]
-    ]
-    return f"Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+    # 1. Add rolling summary if exists (compressed older context)
+    conversation_summary = session.get("conversation_summary")
+    if conversation_summary:
+        messages_summarized = session.get("messages_summarized_count", 0)
+        context_parts.append(f"[Previous Conversation Summary - {messages_summarized} messages compressed]")
+        context_parts.append(conversation_summary)
+        context_parts.append("")  # Empty line separator
+        logger.debug(f"[CONTEXT] Added rolling summary | summarized_count={messages_summarized}")
+    
+    # 2. Add recent messages (full content)
+    recent_messages = session.get("messages", [])
+    if recent_messages:
+        context_parts.append("Recent Conversation:")
+        for msg in recent_messages[-10:]:  # Last 10 messages
+            context_parts.append(f"{msg['role'].upper()}: {msg['content']}")
+        context_parts.append("")  # Empty line separator
+        logger.debug(f"[CONTEXT] Added {len(recent_messages[-10:])} recent messages")
+    
+    # 3. Add semantically relevant past conversations from vector DB (cross-session)
+    if user_id and query_text:
+        try:
+            from src.vector_db.vector_store import AssistantConversationStore
+            relevant_entries = AssistantConversationStore.search_conversations(
+                user_id=str(user_id),
+                query_text=str(query_text),
+                limit=2  # Limit to avoid context bloat
+            )
+            if relevant_entries:
+                context_parts.append("Relevant Past Conversations:")
+                for entry in relevant_entries:
+                    messages = entry.get("messages", [])
+                    # Only include last few messages from each relevant conversation
+                    for msg in messages[-4:]:
+                        context_parts.append(f"{msg['role'].upper()}: {msg['content']}")
+                context_parts.append("")
+                logger.debug(f"[CONTEXT] Added {len(relevant_entries)} relevant past conversations from vector DB")
+        except ImportError:
+            logger.warning("AssistantConversationStore not available for retrieving relevant conversations.")
+        except Exception as e:
+            logger.error(f"Error retrieving relevant conversations: {e}")
+    
+    if not context_parts:
+        return ""
+    
+    return "Conversation History:\n" + "\n".join(context_parts) + "\n"
 
 async def generate_stream_response(
     request: "ChatRequest",
@@ -177,15 +198,20 @@ async def generate_stream_response(
         if request.session_id:
             session_mgr.add_message(request.session_id, "assistant", full_response)
         
+        # Store conversation to vector DB (with optimizations)
         if full_response:
             from src.vector_db.vector_store import AssistantConversationStore
-            # Store conversation to vector DB
             try:
-                messages_to_store = (session["messages"] if session else []) + [{"role": "assistant", "content": full_response}]
+                # Get updated session to include any generated summary
+                updated_session = session_mgr.get_session(request.session_id) if request.session_id else None
+                messages_to_store = (updated_session["messages"] if updated_session else [])
+                conversation_summary = updated_session.get("conversation_summary") if updated_session else None
+                
                 AssistantConversationStore.upsert_conversation(
                     user_id=request.user_id,
                     session_id=request.session_id,
-                    messages=messages_to_store
+                    messages=messages_to_store,
+                    conversation_summary=conversation_summary
                 )
             except Exception as e:
                 logger.error(f"[API] Failed to upsert conversation to vector DB | error={e}")

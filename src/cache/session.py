@@ -12,6 +12,11 @@ from src.utils.json_encoder import PostgreSQLEncoder
 logger = get_logger(__name__)
 redis_client = redis.from_url(settings.redis_url)
 
+# Constants for context management
+SUMMARY_TRIGGER_MESSAGE_COUNT = 15  # Trigger summarization when messages exceed this
+RECENT_MESSAGES_TO_KEEP = 8  # Keep this many recent messages after summarization
+SUMMARY_TOKEN_BUDGET = 500  # Max tokens for summary
+
 class SessionManager:
     def __init__(self):
         self.redis = redis_client
@@ -52,7 +57,11 @@ class SessionManager:
             "messages": [],
             "query_contexts": [],
             "model": settings.analysis_model,
-            "total_token_count": 0
+            "total_token_count": 0,
+            # Hybrid context management fields
+            "conversation_summary": None,  # Rolling summary of older messages
+            "summary_generated_at": None,
+            "messages_summarized_count": 0
         }
 
         redis_client.setex(f"session:{session_id}", 86400, json.dumps(session_data, cls=PostgreSQLEncoder))  # Expires in 24 hours
@@ -104,11 +113,18 @@ class SessionManager:
                 "token_count": msg_tokens
             })
             session_data["total_token_count"] = self.total_token_count(session_data["messages"])
+            
+            # Check if we need to generate a rolling summary
+            message_count = len(session_data["messages"])
+            if message_count > SUMMARY_TRIGGER_MESSAGE_COUNT:
+                logger.info(f"[SESSION] Triggering rolling summary | messages={message_count} > threshold={SUMMARY_TRIGGER_MESSAGE_COUNT}")
+                session_data = self._generate_and_apply_summary(session_id, session_data)
+            
+            # Fallback: Hard trim if still over token limit
             max_tokens = self.max_context_window
-
             if session_data["total_token_count"] > max_tokens:
                 old_count = len(session_data["messages"])
-                logger.warning(f"[SESSION] Context overflow | session_id={session_id[:8]}... | tokens={session_data['total_token_count']}/{max_tokens} | Trimming...")
+                logger.warning(f"[SESSION] Context overflow after summary | tokens={session_data['total_token_count']}/{max_tokens} | Trimming...")
                 session_data["messages"] = self.trim_messages_to_fit_context(session_data["messages"], max_tokens)
                 session_data["total_token_count"] = self.total_token_count(session_data["messages"])
                 new_count = len(session_data["messages"])
@@ -116,9 +132,102 @@ class SessionManager:
 
             redis_client.setex(key, 86400, json.dumps(session_data, cls=PostgreSQLEncoder))  # Refresh expiry
             duration = (time.perf_counter() - start) * 1000
-            logger.info(f"[SESSION] Message saved | total_messages={len(session_data['messages'])} | total_tokens={session_data['total_token_count']} | save_time={duration:.2f}ms")
+            logger.info(f"[SESSION] Message saved | total_messages={len(session_data['messages'])} | total_tokens={session_data['total_token_count']} | has_summary={session_data.get('conversation_summary') is not None} | save_time={duration:.2f}ms")
         else:
             logger.error(f"[SESSION] Failed to add message - session not found | session_id={session_id[:8]}...")
+    
+    def _generate_and_apply_summary(self, session_id: str, session_data: dict) -> dict:
+        """
+        Generate a rolling summary of older messages and keep only recent ones.
+        Uses LLM to compress conversation context while preserving key information.
+        """
+        messages = session_data.get("messages", [])
+        if len(messages) <= RECENT_MESSAGES_TO_KEEP:
+            return session_data
+        
+        # Split messages: old ones to summarize, recent ones to keep
+        messages_to_summarize = messages[:-RECENT_MESSAGES_TO_KEEP]
+        recent_messages = messages[-RECENT_MESSAGES_TO_KEEP:]
+        
+        old_summary = session_data.get("conversation_summary", "")
+        
+        try:
+            summary_start = time.perf_counter()
+            
+            # Build conversation text for summarization
+            conversation_text = ""
+            if old_summary:
+                conversation_text += f"Previous Summary:\n{old_summary}\n\n"
+            
+            conversation_text += "New Messages to Incorporate:\n"
+            for msg in messages_to_summarize:
+                conversation_text += f"{msg['role'].upper()}: {msg['content']}\n"
+            
+            # Generate summary using LLM
+            new_summary = self._call_summary_llm(conversation_text)
+            
+            if new_summary:
+                # Apply summary to session
+                prev_summarized = session_data.get("messages_summarized_count", 0)
+                session_data["conversation_summary"] = new_summary
+                session_data["summary_generated_at"] = datetime.now().isoformat()
+                session_data["messages_summarized_count"] = prev_summarized + len(messages_to_summarize)
+                session_data["messages"] = recent_messages
+                session_data["total_token_count"] = self.total_token_count(recent_messages)
+                
+                summary_duration = (time.perf_counter() - summary_start) * 1000
+                logger.info(f"[SESSION] Rolling summary generated | session_id={session_id[:8]}... | summarized={len(messages_to_summarize)} messages | kept={len(recent_messages)} recent | summary_tokens={self.message_token_count(new_summary)} | time={summary_duration:.0f}ms")
+            else:
+                logger.warning(f"[SESSION] Summary generation returned empty, keeping messages as-is")
+                
+        except Exception as e:
+            logger.error(f"[SESSION] Summary generation failed | session_id={session_id[:8]}... | error={e}")
+            # On failure, just trim messages to avoid bloat
+            session_data["messages"] = recent_messages
+            session_data["total_token_count"] = self.total_token_count(recent_messages)
+        
+        return session_data
+    
+    def _call_summary_llm(self, conversation_text: str) -> Optional[str]:
+        """
+        Call LLM to generate a concise summary of conversation context.
+        Uses a lightweight prompt to keep costs low.
+        """
+        try:
+            from src.utils.clients import get_openrouter_client, get_openai_client
+            
+            summary_prompt = f"""Summarize this trading assistant conversation concisely (2-4 sentences).
+Focus on: key trading topics discussed, specific trades/symbols mentioned, decisions or insights shared, and any ongoing analysis context.
+Keep it factual and useful for continuing the conversation.
+
+{conversation_text}
+
+Summary:"""
+            
+            if settings.model_provider == "openrouter":
+                client = get_openrouter_client()
+                response = client.chat.completions.create(
+                    model=settings.router_model or settings.analysis_model,  # Use router model if available (cheaper)
+                    messages=[{"role": "user", "content": summary_prompt}],
+                    temperature=0.3,  # More deterministic
+                    max_tokens=SUMMARY_TOKEN_BUDGET
+                )
+                content = response.choices[0].message.content
+                return content.strip() if content else None
+            else:
+                client = get_openai_client()
+                response = client.chat.completions.create(
+                    model="gpt-4.1-nano-2025-04-14",  # Use cheaper model for summarization
+                    messages=[{"role": "user", "content": summary_prompt}],
+                    temperature=0.3,
+                    max_tokens=SUMMARY_TOKEN_BUDGET
+                )
+                content = response.choices[0].message.content
+                return content.strip() if content else None
+                
+        except Exception as e:
+            logger.error(f"[SESSION] LLM summary call failed | error={e}")
+            return None
     
     def add_query_context(self, session_id: str, user_message: str, retrieved_data: dict, is_followup: bool = False, followup_ref: Optional[dict] = None, date_range: Optional[tuple] = None):
         """Store only identifiers and minimal metadata for a query to support follow-ups."""
