@@ -89,7 +89,10 @@ Previous context: {len(trade_scope)} trades in scope
             response_length = len(content)
             
             logger.info(f"[LLM] Response generated | chars={response_length} | api_call={api_duration:.0f}ms | total={total_duration:.0f}ms")
-            return content
+
+            from src.llm.output_validator import OutputValidator
+            sanitized_content = OutputValidator.sanitize_output(content)
+            return sanitized_content
 
         except Exception as e:
             duration = (time.perf_counter() - start_time) * 1000
