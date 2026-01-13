@@ -85,7 +85,37 @@ async def chat_endpoint(request: ChatRequest):
             request.session_id = str(uuid.uuid4())
             session_mgr.create_session(request.session_id, str(request.user_id))
             logger.info(f"[API] Generated new session_id: {request.session_id[:8]}...")
+
+        retriever = DataRetriever(user_id=request.user_id)
         
+        # Check if query is in-domain (reject out-of-domain queries)
+        logger.info(f"[API] Checking if query is in-domain...")
+        is_in_domain = (retriever.query_analysis or {}).get("is_in_domain", True)
+        if not is_in_domain:
+            logger.info(f"[API] OUT-OF-DOMAIN query rejected | query_type={(retriever.query_analysis or {}).get('query_type', 'unknown')}")
+            
+            if request.stream:
+                return StreamingResponse(
+                    generate_out_of_domain_response(OUT_OF_DOMAIN_RESPONSE, start_time, request_id),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no"
+                    }
+                )
+            else:
+                return ChatResponse(
+                    response=OUT_OF_DOMAIN_RESPONSE,
+                    data={},
+                    metadata={
+                        "request_id": request_id,
+                        "duration_ms": (time.perf_counter() - start_time) * 1000,
+                        "query_type": "out_of_domain",
+                        "status": "rejected"
+                    }
+                )
+            
         # Detect if this is a follow-up query BEFORE adding current message
         logger.info(f"[API] Checking for follow-up query...")
         session = session_mgr.get_session(request.session_id)
@@ -133,7 +163,6 @@ async def chat_endpoint(request: ChatRequest):
         
         # 1. Retrieve Data (pass anchor_scope for follow-ups)
         retriever_start = time.perf_counter()
-        retriever = DataRetriever(user_id=request.user_id)
         retrieved_data = retriever.retrieve_data(request.query, anchor_scope=anchor_scope)
         retriever_duration = (time.perf_counter() - retriever_start) * 1000
         
@@ -151,34 +180,6 @@ async def chat_endpoint(request: ChatRequest):
             followup_ref=anchor_scope,
             date_range=date_range
         )
-
-        # Check if query is in-domain (reject out-of-domain queries)
-        logger.info(f"[API] Checking if query is in-domain...")
-        is_in_domain = (retriever.query_analysis or {}).get("is_in_domain", True)
-        if not is_in_domain:
-            logger.info(f"[API] OUT-OF-DOMAIN query rejected | query_type={(retriever.query_analysis or {}).get('query_type', 'unknown')}")
-            
-            if request.stream:
-                return StreamingResponse(
-                    generate_out_of_domain_response(OUT_OF_DOMAIN_RESPONSE, start_time, request_id),
-                    media_type="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "X-Accel-Buffering": "no"
-                    }
-                )
-            else:
-                return ChatResponse(
-                    response=OUT_OF_DOMAIN_RESPONSE,
-                    data={},
-                    metadata={
-                        "request_id": request_id,
-                        "duration_ms": (time.perf_counter() - start_time) * 1000,
-                        "query_type": "out_of_domain",
-                        "status": "rejected"
-                    }
-                )
         
         # 3. Handle streaming vs non-streaming
         if request.stream:
