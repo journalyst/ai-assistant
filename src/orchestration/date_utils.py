@@ -121,12 +121,106 @@ class DateQueryClassifier:
     THIS_YEAR_PATTERNS = ['this year', 'current year', 'year to date', 'ytd']
     TODAY_PATTERNS = ['today', 'past 24 hours', 'last 24 hours']
     
+    # Month name mappings
+    MONTH_NAMES = {
+        'january': 1, 'jan': 1,
+        'february': 2, 'feb': 2,
+        'march': 3, 'mar': 3,
+        'april': 4, 'apr': 4,
+        'may': 5,
+        'june': 6, 'jun': 6,
+        'july': 7, 'jul': 7,
+        'august': 8, 'aug': 8,
+        'september': 9, 'sep': 9, 'sept': 9,
+        'october': 10, 'oct': 10,
+        'november': 11, 'nov': 11,
+        'december': 12, 'dec': 12
+    }
+    
+    @staticmethod
+    def get_week_of_month(year: int, month: int, week_num: int) -> Tuple[datetime, datetime]:
+        """
+        Get the date range for a specific week number within a month.
+        Week 1 starts on the first Monday of the month (or day 1 if it's not Monday).
+        """
+        # Get the first day of the month
+        first_day = datetime(year, month, 1)
+        
+        # Find the first Monday (or use day 1 if the month starts after Monday)
+        days_to_monday = (7 - first_day.weekday()) % 7
+        if days_to_monday == 0 and first_day.weekday() != 0:
+            first_monday = first_day
+        elif first_day.weekday() <= 0:  # Monday or earlier in week
+            first_monday = first_day
+        else:
+            first_monday = first_day + timedelta(days=days_to_monday)
+        
+        # Calculate the start of the requested week
+        week_start = first_monday + timedelta(weeks=week_num - 1)
+        week_end = week_start + timedelta(days=6)  # Full week (Mon-Sun)
+        
+        # Ensure we don't go past the month
+        last_day_of_month = (datetime(year, month + 1, 1) if month < 12 else datetime(year + 1, 1, 1)) - timedelta(days=1)
+        if week_end > last_day_of_month:
+            week_end = last_day_of_month
+        
+        return week_start, week_end
+    
     @staticmethod
     def extract_date_context(query: str, current_date: datetime) -> Optional[Tuple[datetime, datetime, str]]:
         """
         Extract date range from query if mentioned.
         """
         query_lower = query.lower()
+        import re
+        
+        # Check for specific week of month patterns (e.g., "3rd week of January", "second week of Feb")
+        week_of_month_pattern = r'(\d+(?:st|nd|rd|th)?|first|second|third|fourth|last)\s+week\s+(?:of\s+)?(\w+)'
+        week_match = re.search(week_of_month_pattern, query_lower)
+        if week_match:
+            week_str = week_match.group(1)
+            month_str = week_match.group(2)
+            
+            # Convert word numbers to digits
+            word_to_num = {
+                'first': 1, '1st': 1,
+                'second': 2, '2nd': 2,
+                'third': 3, '3rd': 3,
+                'fourth': 4, '4th': 4,
+                'last': 4  # Assume last = 4th week
+            }
+            
+            # Extract week number
+            if week_str in word_to_num:
+                week_num = word_to_num[week_str]
+            else:
+                # Extract digit from patterns like "3rd", "2nd"
+                digit_match = re.match(r'(\d+)', week_str)
+                week_num = int(digit_match.group(1)) if digit_match else None
+            
+            # Extract month
+            month_num = DateQueryClassifier.MONTH_NAMES.get(month_str.lower())
+            
+            if week_num and month_num:
+                # Determine the year (use current year or previous year if month hasn't occurred yet)
+                year = current_date.year
+                if month_num > current_date.month:
+                    year -= 1
+                
+                start, end = DateQueryClassifier.get_week_of_month(year, month_num, week_num)
+                month_name = datetime(year, month_num, 1).strftime('%B')
+                context = f"week {week_num} of {month_name} ({start.strftime('%b %d')} - {end.strftime('%b %d')})"
+                logger.info(f"Detected '{week_num} week of {month_name}' pattern -> {context}")
+                return start, end, context
+        
+        # Check for numeric weeks pattern (e.g., "past 2 weeks", "last 3 weeks")
+        weeks_match = re.search(r'(past|last|previous)\s+(\d+)\s+weeks?', query_lower)
+        if weeks_match:
+            n_weeks = int(weeks_match.group(2))
+            start, end = WorkingDayFilter.get_last_n_days(current_date, n_weeks * 7)
+            context = f"past {n_weeks} weeks ({start.strftime('%b %d')} to {end.strftime('%b %d')})"
+            logger.debug(f"Detected '{n_weeks} weeks' pattern -> {context}")
+            return start, end, context
         
         # Check patterns in order (most specific first)
         if any(p in query_lower for p in DateQueryClassifier.LAST_WEEK_PATTERNS):
@@ -173,7 +267,6 @@ class DateQueryClassifier:
             return start, end, context
         
         # Check for numeric patterns like "past 7 days", "last 30 days"
-        import re
         days_match = re.search(r'(past|last|previous)\s+(\d+)\s+days?', query_lower)
         if days_match:
             n_days = int(days_match.group(2))
