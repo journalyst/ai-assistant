@@ -52,9 +52,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files for test client (CSS, JS)
+# Mount static files for test client (CSS, JS) at root level
 if TEST_CLIENT_DIR.exists():
     app.mount("/static", StaticFiles(directory=TEST_CLIENT_DIR), name="static")
+
+@app.get("/")
+async def root():
+    """Serve the test client HTML"""
+    return FileResponse(TEST_CLIENT_DIR / "index.html")
+
+@app.get("/index.html")
+async def index():
+    """Alternative route for index.html"""
+    return FileResponse(TEST_CLIENT_DIR / "index.html")
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
@@ -90,9 +100,12 @@ async def chat_endpoint(request: ChatRequest):
         
         # Check if query is in-domain (reject out-of-domain queries)
         logger.info(f"[API] Checking if query is in-domain...")
-        is_in_domain = (retriever.query_analysis or {}).get("is_in_domain", True)
+        # Analyze query FIRST to populate query_analysis
+        router = QueryRouter()
+        query_analysis = router.analyze_query(request.query)
+        is_in_domain = query_analysis.get("is_in_domain", True)
         if not is_in_domain:
-            logger.info(f"[API] OUT-OF-DOMAIN query rejected | query_type={(retriever.query_analysis or {}).get('query_type', 'unknown')}")
+            logger.info(f"[API] OUT-OF-DOMAIN query rejected | query_type={query_analysis.get('query_type', 'unknown')}")
             
             if request.stream:
                 return StreamingResponse(
