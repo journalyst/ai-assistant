@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
 
 from src.database.queries import TradeQueries
+from .router import QueryRouter
 from src.vector_db.vector_store import JournalStore
 from src.logger import get_logger
 from .router import QueryRouter

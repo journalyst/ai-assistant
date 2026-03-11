@@ -1,6 +1,6 @@
 import time
 import uuid
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from qdrant_client.models import PointStruct, Filter, FieldCondition, MatchValue
 
@@ -15,7 +15,7 @@ class JournalStore:
     connector = QdrantConnector(collection_name=COLLECTION_NAME)
 
     @classmethod
-    def upsert_journal(cls, user_id: str, text: str, tags: List[str], created_at: str):
+    def upsert_journal(cls, user_id: Union[str, int], text: str, tags: List[str], created_at: str):
         """Upsert a journal entry into Qdrant."""
         try:
             client = cls.connector.get_qdrant_client()
@@ -41,7 +41,7 @@ class JournalStore:
             raise
 
     @classmethod
-    def search_journals(cls, user_id: str, query_text: str, limit: int = 5) -> List[dict]:
+    def search_journals(cls, user_id: Union[str, int], query_text: str, limit: int = 5) -> List[dict]:
         """Search for relevant journal entries for a user based on query text."""
         total_start = time.perf_counter()
         query_preview = query_text[:50] + "..." if len(query_text) > 50 else query_text
@@ -100,7 +100,7 @@ class JournalStore:
             raise
     
     @classmethod
-    def get_journals_by_ids(cls, user_id: str, journal_ids: List[str], include_text: bool = False) -> List[dict]:
+    def get_journals_by_ids(cls, user_id: Union[str, int], journal_ids: List[str], include_text: bool = False) -> List[dict]:
         """Retrieve specific journal entries by IDs (for follow-up scope anchoring)."""
         import time
         if not journal_ids:
