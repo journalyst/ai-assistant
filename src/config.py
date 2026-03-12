@@ -1,7 +1,7 @@
 from __future__ import annotations
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import computed_field
+from pydantic import computed_field, field_validator
 import os
 
 class Settings(BaseSettings):
@@ -51,6 +51,21 @@ class Settings(BaseSettings):
 
     # Rate limiting (simple config only; actual limiter integrated later)
     rate_limit_requests_per_minute: int = 60
+
+    @field_validator("debug", mode="before")
+    @classmethod
+    def parse_debug(cls, value):
+        """Accept non-boolean env values without crashing settings load."""
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        normalized = str(value).strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", "warn", "warning", "info", "error", "debug"}:
+            return False
+        return False
 
     @computed_field
     @property
