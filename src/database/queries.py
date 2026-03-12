@@ -156,6 +156,49 @@ class TradeQueries:
             query, user_id,
             {"user_id": user_id, "session": session}
         )
+
+    @staticmethod
+    def get_trades_by_market_type(user_id: str, market_type: str, limit: int = 100) -> List[Dict]:
+        """Get user trades filtered by market type (option, forex, stock, etc.)."""
+        logger.debug(f"Fetching trades for user {user_id} in market_type={market_type}")
+        query = """
+            SELECT t.*, a.symbol, s.name as strategy_name
+            FROM trades t
+            LEFT JOIN assets a ON t.asset_id = a.asset_id
+            LEFT JOIN strategies s ON t.strategy_id = s.strategy_id
+            WHERE t.user_id = :user_id
+              AND LOWER(COALESCE(t.market_type, '')) = LOWER(:market_type)
+            ORDER BY t.trade_date DESC
+            LIMIT :limit
+        """
+        return QueryExecutor.execute_raw_sql(
+            query,
+            user_id,
+            {"user_id": user_id, "market_type": market_type, "limit": limit},
+        )
+
+    @staticmethod
+    def get_option_trade_details(user_id: str, limit: int = 100) -> List[Dict]:
+        """Get option trades joined with normalized option details."""
+        logger.debug(f"Fetching option trade details for user {user_id}")
+        query = """
+            SELECT
+                t.*, a.symbol, s.name as strategy_name,
+                o.option_type, o.strike_price, o.expiry_date, o.premium, o.exercise_type, o.legs_count
+            FROM trades t
+            LEFT JOIN assets a ON t.asset_id = a.asset_id
+            LEFT JOIN strategies s ON t.strategy_id = s.strategy_id
+            LEFT JOIN trade_option_details o ON o.trade_id = t.trade_id
+            WHERE t.user_id = :user_id
+              AND LOWER(COALESCE(t.market_type, '')) = 'option'
+            ORDER BY t.trade_date DESC
+            LIMIT :limit
+        """
+        return QueryExecutor.execute_raw_sql(
+            query,
+            user_id,
+            {"user_id": user_id, "limit": limit},
+        )
     
     @staticmethod
     def get_win_rate_by_strategy(user_id: str) -> List[Dict]:
