@@ -1,13 +1,13 @@
+"""Seed PostgreSQL schema (and optionally sample rows) from seed_data.sql.
+
+By default this script applies DDL only (tables, indexes, constraints) and skips
+legacy INSERT statements so normalized JSON seeding can be the primary source.
+
+Set ``SEED_INCLUDE_LEGACY_DATA=true`` to also apply INSERT statements from
+``sample_data/seed_data.sql``.
 """
-Seed PostgreSQL database with test data from seed_data.sql.
 
-This script reads the SQL file and executes it against the PostgreSQL database.
-Uses the read-write connection (not read-only) for seeding.
-
-Usage:
-    python -m src.seed_postgres
-"""
-
+import os
 from pathlib import Path
 from sqlalchemy import create_engine, text
 from src.config import settings
@@ -38,7 +38,14 @@ def read_sql_file(file_path: Path) -> str:
         return f.read()
 
 
-def execute_sql_statements(connection, sql_content: str):
+def _should_skip_statement(statement: str, include_legacy_data: bool) -> bool:
+    """Skip INSERT statements unless explicitly enabled."""
+    if include_legacy_data:
+        return False
+    return statement.lstrip().upper().startswith("INSERT INTO")
+
+
+def execute_sql_statements(connection, sql_content: str, include_legacy_data: bool = False):
     """Execute SQL statements from the file."""
     # Split by semicolon but handle comments properly
     statements = []
@@ -62,8 +69,13 @@ def execute_sql_statements(connection, sql_content: str):
     # Execute each statement
     success_count = 0
     error_count = 0
+    skipped_count = 0
     
     for stmt in statements:
+        if _should_skip_statement(stmt, include_legacy_data):
+            skipped_count += 1
+            continue
+
         try:
             connection.execute(text(stmt))
             success_count += 1
@@ -73,7 +85,7 @@ def execute_sql_statements(connection, sql_content: str):
             logger.debug(f"Failed statement: {stmt[:100]}...")
     
     connection.commit()
-    return success_count, error_count
+    return success_count, error_count, skipped_count
 
 
 def seed_database():
@@ -82,6 +94,9 @@ def seed_database():
     logger.info("Starting PostgreSQL Database Seeding")
     logger.info("=" * 50)
     
+    include_legacy_data = os.getenv("SEED_INCLUDE_LEGACY_DATA", "false").lower() == "true"
+    logger.info("Legacy INSERT seeding enabled: %s", include_legacy_data)
+
     # Read SQL file
     try:
         sql_content = read_sql_file(SQL_FILE_PATH)
@@ -98,9 +113,18 @@ def seed_database():
             
             # Execute seed statements
             logger.info("Executing seed SQL statements...")
-            success, errors = execute_sql_statements(connection, sql_content)
+            success, errors, skipped = execute_sql_statements(
+                connection,
+                sql_content,
+                include_legacy_data=include_legacy_data,
+            )
             
-            logger.info(f"Executed {success} statements successfully, {errors} errors")
+            logger.info(
+                "Executed %s statements successfully, %s errors, %s skipped",
+                success,
+                errors,
+                skipped,
+            )
             
             if errors > 0:
                 logger.warning("Some statements failed - check logs for details")
@@ -122,7 +146,10 @@ def main():
     success = seed_database()
     if success:
         print("\n✓ PostgreSQL database seeded successfully!")
-        print("  Tables populated: users, assets, strategies, tags, trades, trade_tags")
+        if os.getenv("SEED_INCLUDE_LEGACY_DATA", "false").lower() == "true":
+            print("  Legacy sample rows loaded from sample_data/seed_data.sql")
+        else:
+            print("  Schema initialized (legacy sample rows skipped)")
     else:
         print("\n✗ PostgreSQL seeding failed - check logs for details")
         exit(1)
