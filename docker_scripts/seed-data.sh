@@ -19,6 +19,7 @@ print_err() { echo -e "${RED}$1${NC}"; }
 # Parse arguments
 POSTGRES_ONLY=false
 QDRANT_ONLY=false
+INCLUDE_LEGACY_DATA=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -39,15 +40,21 @@ Usage: ./docker_scripts/seed-data.sh [options]
 Options:
     --postgres-only    Seed only PostgreSQL database
     --qdrant-only      Seed only Qdrant vector database (journals)
+    --include-legacy-data  Also seed legacy INSERT rows from sample_data/seed_data.sql
     --help, -h         Show this help message
 
 Examples:
-    ./docker_scripts/seed-data.sh                 # Seed both databases
+    ./docker_scripts/seed-data.sh                 # Seed schema + normalized JSON + journals
     ./docker_scripts/seed-data.sh --postgres-only # Seed only PostgreSQL
     ./docker_scripts/seed-data.sh --qdrant-only   # Seed only Qdrant
+    ./docker_scripts/seed-data.sh --include-legacy-data  # Also load old sample rows
 
 EOF
             exit 0
+            ;;
+        --include-legacy-data)
+            INCLUDE_LEGACY_DATA=true
+            shift
             ;;
         *)
             print_err "Unknown option: $1"
@@ -68,6 +75,14 @@ if [ "$QDRANT_ONLY" = false ]; then
     print_info ">>> Seeding PostgreSQL Database..."
     echo "----------------------------------------"
     
+    if [ "$INCLUDE_LEGACY_DATA" = true ]; then
+        export SEED_INCLUDE_LEGACY_DATA=true
+        print_warn "Legacy SQL INSERT seed is ENABLED"
+    else
+        export SEED_INCLUDE_LEGACY_DATA=false
+        print_info "Legacy SQL INSERT seed is disabled (schema-only baseline)"
+    fi
+
     python -m src.data_seeding.seed_postgres
     
     if [ $? -eq 0 ]; then
@@ -75,6 +90,23 @@ if [ "$QDRANT_ONLY" = false ]; then
     else
         print_err "PostgreSQL seeding failed!"
         exit 1
+    fi
+
+    if [ -f "sample_data/sample_options_trades_jan_feb_2026.json" ]; then
+        echo ""
+        print_info ">>> Seeding Normalized Trades JSON..."
+        echo "----------------------------------------"
+
+        python -m src.data_seeding.seed_trades_normalized
+
+        if [ $? -eq 0 ]; then
+            print_success "Normalized trades seeding completed!"
+        else
+            print_err "Normalized trades seeding failed!"
+            exit 1
+        fi
+    else
+        print_warn "sample_data/sample_options_trades_jan_feb_2026.json not found - skipping normalized trades seeding"
     fi
 fi
 
@@ -102,13 +134,12 @@ echo "========================================"
 echo ""
 
 if [ "$QDRANT_ONLY" = false ]; then
-    echo "PostgreSQL Tables:"
-    echo "  - users (3 test users)"
-    echo "  - assets (12 tradeable instruments)"
-    echo "  - strategies (8 strategies)"
-    echo "  - tags (17 tags)"
-    echo "  - trades (90 trades)"
-    echo "  - trade_tags (trade-tag associations)"
+    echo "PostgreSQL Objects:"
+    echo "  - final schema from sample_data/seed_data.sql (DDL)"
+    echo "  - normalized trades from sample_options_trades_jan_feb_2026.json"
+    if [ "$INCLUDE_LEGACY_DATA" = true ]; then
+        echo "  - legacy SQL INSERT sample rows (enabled)"
+    fi
     echo ""
 fi
 

@@ -4,6 +4,7 @@
 param(
     [switch]$PostgresOnly,
     [switch]$QdrantOnly,
+    [switch]$IncludeLegacyData,
     [switch]$Help
 )
 
@@ -25,12 +26,14 @@ Usage: .\scripts\seed-data.ps1 [options]
 Options:
     -PostgresOnly    Seed only PostgreSQL database
     -QdrantOnly      Seed only Qdrant vector database (journals)
+    -IncludeLegacyData  Also seed legacy INSERT rows from sample_data/seed_data.sql
     -Help            Show this help message
 
 Examples:
-    .\scripts\seed-data.ps1                 # Seed both databases
+    .\scripts\seed-data.ps1                 # Seed schema + normalized JSON + journals
     .\scripts\seed-data.ps1 -PostgresOnly   # Seed only PostgreSQL
     .\scripts\seed-data.ps1 -QdrantOnly     # Seed only Qdrant
+    .\scripts\seed-data.ps1 -IncludeLegacyData # Also load old sample rows
 
 Requirements:
     - Python virtual environment at .venv/
@@ -69,6 +72,14 @@ try {
         Write-Info ">>> Seeding PostgreSQL Database..."
         Write-Host "----------------------------------------"
         
+        if ($IncludeLegacyData) {
+            $env:SEED_INCLUDE_LEGACY_DATA = "true"
+            Write-Warn "Legacy SQL INSERT seed is ENABLED"
+        } else {
+            $env:SEED_INCLUDE_LEGACY_DATA = "false"
+            Write-Info "Legacy SQL INSERT seed is disabled (schema-only baseline)"
+        }
+
         & $VenvPython -m src.data_seeding.seed_postgres
         
         if ($LASTEXITCODE -eq 0) {
@@ -76,6 +87,23 @@ try {
         } else {
             Write-Err "PostgreSQL seeding failed!"
             exit 1
+        }
+
+        if (Test-Path "sample_data/sample_options_trades_jan_feb_2026.json") {
+            Write-Host ""
+            Write-Info ">>> Seeding Normalized Trades JSON..."
+            Write-Host "----------------------------------------"
+
+            & $VenvPython -m src.data_seeding.seed_trades_normalized
+
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "Normalized trades seeding completed!"
+            } else {
+                Write-Err "Normalized trades seeding failed!"
+                exit 1
+            }
+        } else {
+            Write-Warn "sample_data/sample_options_trades_jan_feb_2026.json not found - skipping normalized trades seeding"
         }
     }
 
@@ -103,13 +131,12 @@ try {
     Write-Host ""
     
     if (-not $QdrantOnly) {
-        Write-Host "PostgreSQL Tables:"
-        Write-Host "  - users (3 test users)"
-        Write-Host "  - assets (12 tradeable instruments)"
-        Write-Host "  - strategies (8 strategies)"
-        Write-Host "  - tags (17 tags)"
-        Write-Host "  - trades (90 trades)"
-        Write-Host "  - trade_tags (trade-tag associations)"
+        Write-Host "PostgreSQL Objects:"
+        Write-Host "  - final schema from sample_data/seed_data.sql (DDL)"
+        Write-Host "  - normalized trades from sample_options_trades_jan_feb_2026.json"
+        if ($IncludeLegacyData) {
+            Write-Host "  - legacy SQL INSERT sample rows (enabled)"
+        }
         Write-Host ""
     }
     
