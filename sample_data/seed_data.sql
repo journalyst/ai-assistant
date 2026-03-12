@@ -6,6 +6,16 @@
 -- DROP EXISTING TABLES (if any)
 -- ============================================
 DROP TABLE IF EXISTS trade_tags CASCADE;
+DROP TABLE IF EXISTS trade_commodity_details CASCADE;
+DROP TABLE IF EXISTS trade_prop_details CASCADE;
+DROP TABLE IF EXISTS trade_forex_details CASCADE;
+DROP TABLE IF EXISTS trade_option_details CASCADE;
+DROP TABLE IF EXISTS trade_future_details CASCADE;
+DROP TABLE IF EXISTS trade_crypto_details CASCADE;
+DROP TABLE IF EXISTS trade_stock_details CASCADE;
+DROP TABLE IF EXISTS trade_learning_entries CASCADE;
+DROP TABLE IF EXISTS trade_ideas CASCADE;
+DROP TABLE IF EXISTS trade_mistakes CASCADE;
 DROP TABLE IF EXISTS trades CASCADE;
 DROP TABLE IF EXISTS tags CASCADE;
 DROP TABLE IF EXISTS strategies CASCADE;
@@ -43,6 +53,20 @@ CREATE TABLE strategies (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Accounts table
+CREATE TABLE accounts (
+    account_id SERIAL PRIMARY KEY,
+    user_id VARCHAR(100) NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    external_account_id TEXT UNIQUE,
+    broker_id INTEGER,
+    exchange_id INTEGER,
+    account_type_id INTEGER,
+    account_external_id TEXT,
+    account_label TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Tags table
 CREATE TABLE tags (
     tag_id SERIAL PRIMARY KEY,
@@ -56,12 +80,29 @@ CREATE TABLE tags (
 CREATE TABLE trades (
     trade_id SERIAL PRIMARY KEY,
     user_id VARCHAR(100) NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    external_trade_id TEXT UNIQUE,
     asset_id INTEGER NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    account_id INTEGER REFERENCES accounts(account_id) ON DELETE SET NULL,
     strategy_id INTEGER REFERENCES strategies(strategy_id) ON DELETE SET NULL,
     direction TEXT NOT NULL,
+    trade_direction TEXT,
+    order_type TEXT,
+    status TEXT,
+    market_type TEXT,
+    import_type TEXT,
     entry_type TEXT,
     session TEXT,
     timeframe TEXT,
+    quantity NUMERIC(14,4),
+    entry_price NUMERIC(14,4),
+    exit_price NUMERIC(14,4),
+    total_fee NUMERIC(14,4),
+    take_profit NUMERIC(14,4),
+    stop_loss NUMERIC(14,4),
+    trade_outcome TEXT,
+    confidence TEXT,
+    version TEXT,
+    metadata JSONB,
     risk_percentage NUMERIC(5,2),
     risk_reward NUMERIC(5,2),
     outcome TEXT,
@@ -76,7 +117,167 @@ CREATE TABLE trades (
     trade_rating TEXT,
     trade_date DATE,
     entry_time TEXT,
+    entry_timestamp TIMESTAMP WITH TIME ZONE,
+    exit_timestamp TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Normalized nested entities
+CREATE TABLE trade_mistakes (
+    id SERIAL PRIMARY KEY,
+    external_mistake_id TEXT,
+    trade_id INTEGER NOT NULL REFERENCES trades(trade_id) ON DELETE CASCADE,
+    mistake_description TEXT,
+    mistake_emotional_state TEXT,
+    mistake_trigger_and_cause TEXT,
+    mistake_risk_plan_violation BOOLEAN,
+    mistake_avoidable BOOLEAN,
+    mistake_reaction_type TEXT,
+    mistake_scenario_note TEXT,
+    version TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE trade_ideas (
+    id SERIAL PRIMARY KEY,
+    external_idea_id TEXT,
+    trade_id INTEGER NOT NULL REFERENCES trades(trade_id) ON DELETE CASCADE,
+    idea_setup_type TEXT,
+    idea_reason_enter TEXT,
+    idea_confluence_factors JSONB,
+    idea_primary_scenario TEXT,
+    idea_alternative_scenario TEXT,
+    version TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE trade_learning_entries (
+    id SERIAL PRIMARY KEY,
+    external_learning_id TEXT,
+    trade_id INTEGER NOT NULL REFERENCES trades(trade_id) ON DELETE CASCADE,
+    learning_what_repeated TEXT,
+    learning_is_recurring BOOLEAN,
+    learning_core TEXT,
+    learning_expanded_reflection TEXT,
+    learning_action_plan TEXT,
+    version TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE trade_stock_details (
+    id SERIAL PRIMARY KEY,
+    trade_id INTEGER NOT NULL UNIQUE REFERENCES trades(trade_id) ON DELETE CASCADE,
+    earnings_impact TEXT,
+    earnings_event_date DATE,
+    volume_profile_notes TEXT,
+    sector TEXT,
+    gap_analysis TEXT,
+    version TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE trade_crypto_details (
+    id SERIAL PRIMARY KEY,
+    trade_id INTEGER NOT NULL UNIQUE REFERENCES trades(trade_id) ON DELETE CASCADE,
+    wallet_name TEXT,
+    market_sentiment_idx NUMERIC(10,4),
+    funding_rate NUMERIC(10,6),
+    open_interest_change NUMERIC(14,4),
+    version TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE trade_future_details (
+    id SERIAL PRIMARY KEY,
+    trade_id INTEGER NOT NULL UNIQUE REFERENCES trades(trade_id) ON DELETE CASCADE,
+    contract_type TEXT,
+    contract_expiry_date DATE,
+    days_to_expiry INTEGER,
+    lot_size NUMERIC(14,4),
+    liquidation_price NUMERIC(14,4),
+    maintenance_margin NUMERIC(14,4),
+    margin_call_story TEXT,
+    version TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE trade_option_details (
+    id SERIAL PRIMARY KEY,
+    trade_id INTEGER NOT NULL UNIQUE REFERENCES trades(trade_id) ON DELETE CASCADE,
+    legs_count INTEGER,
+    option_type TEXT,
+    strike_price NUMERIC(14,4),
+    expiry_date DATE,
+    premium NUMERIC(14,4),
+    exercise_type TEXT,
+    version TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE trade_forex_details (
+    id SERIAL PRIMARY KEY,
+    trade_id INTEGER NOT NULL UNIQUE REFERENCES trades(trade_id) ON DELETE CASCADE,
+    swap_long NUMERIC(14,4),
+    swap_short NUMERIC(14,4),
+    swap_decision TEXT,
+    news_event BOOLEAN,
+    news_impact TEXT,
+    news_description TEXT,
+    session_analysis TEXT,
+    correlation_miss TEXT,
+    broker_spread_notes TEXT,
+    version TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE trade_prop_details (
+    id SERIAL PRIMARY KEY,
+    trade_id INTEGER NOT NULL UNIQUE REFERENCES trades(trade_id) ON DELETE CASCADE,
+    prop_firm_id INTEGER,
+    challenge_start_date DATE,
+    phase_tracker TEXT,
+    phase_progress TEXT,
+    phase_pnl NUMERIC(14,4),
+    daily_drawdown_limit NUMERIC(14,4),
+    overall_drawdown_limit NUMERIC(14,4),
+    profit_target NUMERIC(14,4),
+    consistency_rule_percent NUMERIC(10,4),
+    consistency_check TEXT,
+    what_kept_me_safe TEXT,
+    challenge_reset BOOLEAN,
+    prop_rule_conflict TEXT,
+    funding_status TEXT,
+    version TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE trade_commodity_details (
+    id SERIAL PRIMARY KEY,
+    trade_id INTEGER NOT NULL UNIQUE REFERENCES trades(trade_id) ON DELETE CASCADE,
+    underlying_symbol TEXT,
+    inventory_impact TEXT,
+    supply_chain TEXT,
+    fundamental_check TEXT,
+    cot_positioning TEXT,
+    cot_extreme BOOLEAN,
+    dxy_at_entry NUMERIC(14,4),
+    dxy_at_exit NUMERIC(14,4),
+    weather_impact TEXT,
+    geopolitical_event TEXT,
+    seasonal_pattern TEXT,
+    version TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Trade-Tags junction table (many-to-many)
@@ -96,6 +297,12 @@ CREATE INDEX idx_trades_trade_date ON trades(trade_date);
 CREATE INDEX idx_trades_outcome ON trades(outcome);
 CREATE INDEX idx_strategies_user_id ON strategies(user_id);
 CREATE INDEX idx_tags_user_id ON tags(user_id);
+CREATE INDEX idx_accounts_user_id ON accounts(user_id);
+CREATE INDEX idx_trades_external_trade_id ON trades(external_trade_id);
+CREATE INDEX idx_trades_market_type ON trades(market_type);
+CREATE INDEX idx_trade_mistakes_trade_id ON trade_mistakes(trade_id);
+CREATE INDEX idx_trade_ideas_trade_id ON trade_ideas(trade_id);
+CREATE INDEX idx_trade_learning_entries_trade_id ON trade_learning_entries(trade_id);
 
 -- ============================================
 -- USERS TABLE
