@@ -37,6 +37,11 @@ The easiest way to run the app is with Docker. This sets up everything automatic
    docker compose exec server ./scripts/seed-data.sh
    ```
 
+   Default behavior now uses the backend-final flow:
+   - Applies schema from `sample_data/seed_data.sql` (DDL only)
+   - Skips legacy SQL sample `INSERT` rows
+   - Loads normalized trades from `sample_data/sample_options_trades_jan_feb_2026.json`
+
 6. **Open the app** at [http://localhost:8000](http://localhost:8000)
 
 ### Useful Docker Commands
@@ -59,6 +64,9 @@ docker compose exec server ./scripts/seed-data.sh --postgres-only
 
 # Seed only Qdrant (journals)
 docker compose exec server ./scripts/seed-data.sh --qdrant-only
+
+# Optional: include old SQL sample rows too
+docker compose exec server ./scripts/seed-data.sh --include-legacy-data
 ```
 
 ---
@@ -112,6 +120,15 @@ Use this if you need to make code changes and want hot-reload.
    .\scripts\seed-data.ps1
    ```
 
+   This now performs two PostgreSQL steps:
+   - Seeds baseline schema from `sample_data/seed_data.sql` (DDL only)
+   - Loads normalized 2026 option dataset from `sample_data/sample_options_trades_jan_feb_2026.json` (if present)
+
+   To include legacy SQL sample rows as well, run:
+   ```powershell
+   .\scripts\seed-data.ps1 -IncludeLegacyData
+   ```
+
 7. **Run the API server**
    ```powershell
    .\scripts\run-api.ps1
@@ -123,6 +140,23 @@ Use this if you need to make code changes and want hot-reload.
    ```
 
 8. **Open the app** at [http://localhost:8000](http://localhost:8000)
+
+---
+
+## Testing With Normalized 2026 Dataset
+
+After seeding, select `Options User (UUID)` in the chat UI and try:
+
+- `Show my top 5 profitable option trades in January 2026`
+- `Show all option trades expiring this week`
+- `What did I repeatedly do wrong in losing trades?`
+- `Summarize my learnings and action plans from recent trades`
+
+Expected behavior:
+
+- Streaming responses show retrieval progress in the header status
+- Metadata panel tabs (`Summary`, `Trades`, `Journals`, `Raw`) populate during/after streaming
+- Trade rows include normalized fields such as `market_type`, `entry_price`, `exit_price`, and option detail joins when present
 
 ---
 

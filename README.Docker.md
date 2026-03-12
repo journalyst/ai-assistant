@@ -100,7 +100,22 @@ docker build --platform=linux/arm64 -t journalyst-ai:latest .
 
 ## Seeding Data
 
-The PostgreSQL container automatically seeds data from `sample_data/seed_data.sql` on first run.
+Use the seed script from the server container:
+
+```bash
+docker compose exec server ./scripts/seed-data.sh
+```
+
+Default behavior:
+- Applies schema from `sample_data/seed_data.sql` (DDL only)
+- Skips legacy SQL sample INSERT rows
+- Loads normalized trades from `sample_data/sample_options_trades_jan_feb_2026.json`
+
+Optional legacy mode:
+
+```bash
+docker compose exec server ./scripts/seed-data.sh --include-legacy-data
+```
 
 To seed journal entries into Qdrant:
 ```bash
