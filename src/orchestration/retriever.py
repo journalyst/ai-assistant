@@ -14,9 +14,9 @@ logger = get_logger(__name__)
 class DataRetriever:
     """Retrieves data from various sources based on user queries."""
 
-    # NOTE: For testing with the 2024 seed dataset, we pin "today" to the last date in seed_data.sql (Feb 15, 2024).
+    # NOTE: For local seed testing, pin "today" to include the normalized Jan-Feb 2026 sample dataset.
     # Change this back to datetime.now() before pushing to production.
-    TEST_SEED_CURRENT_DATE = datetime(2024, 2, 15)
+    TEST_SEED_CURRENT_DATE = datetime(2026, 2, 28)
 
     def __init__(self, user_id: str, current_date: Optional[datetime] = None):
         self.user_id = user_id
