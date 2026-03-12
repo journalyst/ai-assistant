@@ -400,8 +400,15 @@ def _insert_many_nested(conn, table_name: str, trade_id: int, records: list[dict
         if "updated_at" in data:
             data["updated_at"] = _to_datetime(data["updated_at"]) or datetime.utcnow()
 
+        # Serialize list/dict values for JSONB columns
+        jsonb_keys = {k for k, v in data.items() if isinstance(v, (list, dict))}
+        for k in jsonb_keys:
+            data[k] = json.dumps(data[k])
+
         columns = ", ".join(data.keys())
-        values = ", ".join([f":{k}" for k in data.keys()])
+        values = ", ".join(
+            [f"CAST(:{k} AS JSONB)" if k in jsonb_keys else f":{k}" for k in data.keys()]
+        )
         conn.execute(text(f"INSERT INTO {table_name} ({columns}) VALUES ({values})"), data)
 
 
@@ -444,8 +451,15 @@ def _upsert_one_detail(conn, table_name: str, trade_id: int, item: dict[str, Any
     if "updated_at" in data:
         data["updated_at"] = _to_datetime(data["updated_at"]) or datetime.utcnow()
 
+    # Serialize list/dict values for JSONB columns
+    jsonb_keys = {k for k, v in data.items() if isinstance(v, (list, dict))}
+    for k in jsonb_keys:
+        data[k] = json.dumps(data[k])
+
     columns = ", ".join(data.keys())
-    values = ", ".join([f":{k}" for k in data.keys()])
+    values = ", ".join(
+        [f"CAST(:{k} AS JSONB)" if k in jsonb_keys else f":{k}" for k in data.keys()]
+    )
     conn.execute(text(f"INSERT INTO {table_name} ({columns}) VALUES ({values})"), data)
 
 
