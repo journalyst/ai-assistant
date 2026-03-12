@@ -153,8 +153,8 @@ async def generate_stream_response(
         
         # Send retrieved data
         data_event = {
-            "trade_data": retrieved_data.get("trade_data", []),
-            "journal_data": retrieved_data.get("journal_data", [])
+            "trade_data": retrieved_data.get("trades", []),
+            "journal_data": retrieved_data.get("journals", [])
         }
         yield f"event: data\ndata: {json.dumps(data_event, cls=PostgreSQLEncoder)}\n\n"
         
