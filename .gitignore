@@ -73,3 +73,5 @@ local_settings.py
 
 # AI CLI specific
 AGENTS.md
+.opencode/
+package*.json
