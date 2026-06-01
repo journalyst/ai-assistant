@@ -66,6 +66,16 @@ async def index():
     """Alternative route for index.html"""
     return FileResponse(TEST_CLIENT_DIR / "index.html")
 
+@app.get("/styles.css")
+async def styles():
+    """Serve the test client stylesheet from the app root."""
+    return FileResponse(TEST_CLIENT_DIR / "styles.css")
+
+@app.get("/app.js")
+async def app_js():
+    """Serve the test client script from the app root."""
+    return FileResponse(TEST_CLIENT_DIR / "app.js")
+
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
     """
