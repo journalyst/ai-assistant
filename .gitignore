@@ -70,3 +70,6 @@ data/tmp/
 
 # Ignore local config overrides
 local_settings.py
+
+# AI CLI specific
+AGENTS.md
